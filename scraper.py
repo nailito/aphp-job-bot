@@ -1,4 +1,39 @@
 import requests
+session = requests.Session()
+
+def init_session():
+    """Visite la page d'accueil pour récupérer les cookies."""
+    try:
+        session.get(
+            "https://recrutement.aphp.fr/jobs",
+            headers={"User-Agent": HEADERS["User-Agent"]},
+            timeout=15
+        )
+        print("  ✅ Session initialisée")
+    except Exception as e:
+        print(f"  ⚠️  Init session : {e}")
+
+def fetch_page(page: int, retries: int = 3) -> dict | None:
+    payload = {
+        "facets": {},
+        "currentPage": page,
+        "onlyCmsJobs": False,
+        "loadOffers": True
+    }
+    for attempt in range(1, retries + 1):
+        try:
+            r = session.post(API_URL, json=payload, headers=HEADERS, timeout=30)
+            if r.status_code == 200:
+                return r.json()
+            print(f"  ⚠️  HTTP {r.status_code} page {page}")
+            return None
+        except requests.exceptions.Timeout:
+            print(f"  ⏱️  Timeout page {page} (tentative {attempt}/{retries}), nouvelle tentative dans 5s...")
+            time.sleep(5)
+        except requests.exceptions.ConnectionError:
+            print(f"  🔌 Erreur connexion page {page}, attente 10s...")
+            time.sleep(10)
+    return None
 import time
 from datetime import datetime
 from html.parser import HTMLParser
@@ -6,14 +41,10 @@ from html.parser import HTMLParser
 API_URL = "https://recrutement.aphp.fr/api/search"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0",
     "Content-Type": "application/json",
     "Referer": "https://recrutement.aphp.fr/jobs",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Origin": "https://recrutement.aphp.fr",
 }
-
 TAG_IDS = {
     "434": "contrat",
     "435": "teletravail",
@@ -69,6 +100,8 @@ def fetch_page(page: int, retries: int = 3) -> dict | None:
 
 def scrape_jobs(url=None, max_pages=5) -> list[dict]:
     jobs = []
+    init_session()  # ← ajoute cette ligne
+    time.sleep(2) 
 
     for page in range(1, max_pages + 1):
         print(f"  📄 Page {page}/{max_pages}...")
