@@ -1,4 +1,5 @@
 import requests
+import time
 from datetime import datetime
 from html.parser import HTMLParser
 
@@ -10,7 +11,6 @@ HEADERS = {
     "Referer": "https://recrutement.aphp.fr/jobs",
 }
 
-# Correspondance des IDs de customTags
 TAG_IDS = {
     "434": "contrat",
     "435": "teletravail",
@@ -34,7 +34,6 @@ def strip_html(html: str) -> str:
     return s.get_data().strip()
 
 def parse_tags(custom_tags: list) -> dict:
-    """Extrait les champs utiles depuis les customTags."""
     result = {}
     for tag in custom_tags:
         key = TAG_IDS.get(str(tag.get("id")))
@@ -42,28 +41,41 @@ def parse_tags(custom_tags: list) -> dict:
             result[key] = tag.get("value", "")
     return result
 
-def scrape_jobs(url=None, max_pages=5) -> list[dict]:
+def fetch_page(page: int, retries: int = 3) -> dict | None:
+    """Fetch une page avec retry automatique."""
+    payload = {
+        "facets": {},
+        "currentPage": page,
+        "onlyCmsJobs": False,
+        "loadOffers": True
+    }
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.post(API_URL, json=payload, headers=HEADERS, timeout=30)
+            if r.status_code == 200:
+                return r.json()
+            print(f"  ⚠️  HTTP {r.status_code} page {page}")
+            return None
+        except requests.exceptions.Timeout:
+            print(f"  ⏱️  Timeout page {page} (tentative {attempt}/{retries}), nouvelle tentative dans 5s...")
+            time.sleep(5)
+        except requests.exceptions.ConnectionError:
+            print(f"  🔌 Erreur connexion page {page} (tentative {attempt}/{retries}), attente 10s...")
+            time.sleep(10)
+    print(f"  ❌ Page {page} abandonnée après {retries} tentatives")
+    return None
+
+def scrape_jobs(url=None, max_pages=115) -> list[dict]:
     jobs = []
 
     for page in range(1, max_pages + 1):
-        print(f"  📄 Page {page}...")
+        print(f"  📄 Page {page}/{max_pages}...")
 
-        payload = {
-            "facets": {},
-            "currentPage": page,
-            "onlyCmsJobs": False,
-            "loadOffers": True
-        }
-
-        r = requests.post(API_URL, json=payload, headers=HEADERS, timeout=15)
-
-        if r.status_code != 200:
-            print(f"  ⚠️  Erreur HTTP {r.status_code}")
+        data = fetch_page(page)
+        if not data:
             break
 
-        data = r.json()
         offers = data.get("jobs", {}).get("offers", [])
-
         if not offers:
             print("  ✅ Plus d'offres.")
             break
@@ -71,24 +83,27 @@ def scrape_jobs(url=None, max_pages=5) -> list[dict]:
         for o in offers:
             tags = parse_tags(o.get("customTags", []))
             jobs.append({
-                "id":           str(o.get("id", "")),
-                "title":        o.get("title", "Sans titre").strip(),
-                "location":     o.get("location", "Non précisé"),
-                "metier":       tags.get("metier", ""),
-                "hopital":      tags.get("hopital", ""),
-                "contrat":      tags.get("contrat", ""),
-                "teletravail":  tags.get("teletravail", ""),
-                "horaire":      tags.get("horaire", ""),
-                "temps_travail":tags.get("temps_travail", ""),
-                "filiere":      o.get("jobCategoryLabel", ""),
+                "id":            str(o.get("id", "")),
+                "title":         o.get("title", "Sans titre").strip(),
+                "location":      o.get("location", "Non précisé"),
+                "metier":        tags.get("metier", ""),
+                "hopital":       tags.get("hopital", ""),
+                "contrat":       tags.get("contrat", ""),
+                "teletravail":   tags.get("teletravail", ""),
+                "horaire":       tags.get("horaire", ""),
+                "temps_travail": tags.get("temps_travail", ""),
+                "filiere":       o.get("jobCategoryLabel", ""),
                 "date_publication": o.get("publicationDate", ""),
-                "description":  strip_html(o.get("description", "")),
-                "url":          f"https://recrutement.aphp.fr/jobs/{o.get('id', '')}",
-                "scraped_at":   datetime.now().isoformat(),
+                "description":   strip_html(o.get("description", "")),
+                "url":           f"https://recrutement.aphp.fr/jobs/{o.get('id', '')}",
+                "scraped_at":    datetime.now().isoformat(),
             })
 
         total = data.get("jobs", {}).get("totalCount", "?")
-        print(f"  ✅ {len(offers)} offres récupérées (total dispo : {total})")
+        print(f"  ✅ {len(jobs)} offres cumulées / {total} total")
+
+        # Pause entre chaque page pour éviter le blocage
+        time.sleep(1)
 
     print(f"\n✅ Total scraped : {len(jobs)} offres")
     return jobs

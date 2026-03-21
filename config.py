@@ -1,63 +1,91 @@
-# ============================================================
-#  config.py  —  À PERSONNALISER avant de lancer le bot
-# ============================================================
+import os
 
-#Scraping
-# Métiers à exclure du scraping
+# --- URL cible ---
+APHP_JOBS_URL = "https://recrutement.aphp.fr/api/search"
+
+# --- Métiers exclus (filtre dur, avant LLM) ---
 EXCLUDED_METIERS = [
-    "Infirmier",
-    "Psychologue",
-    "Aide-soignant",
-    "Technicien de laboratoire",
-    "Infirmier puériculteur",
-    "Encadrement Maïeutique",
-    "Infirmier de bloc",
-    "Auxiliaire de puériculture",
+    "Infirmier", "Psychologue", "Aide-soignant",
+    "Technicien de laboratoire", "Infirmier puériculteur",
+    "Encadrement Maïeutique", "Infirmier de bloc", "Auxiliaire de puériculture",
     "Assistanat secrétariat - secrétariat",
-    "Responsable RH - Encadrant RH",    
-    "Secrétariat médical - Assistanat médical",  
+    "Responsable RH - Encadrant RH",
+    "Secrétariat médical - Assistanat médical",
     "Soins, paramédical - Autres métiers",
-    "Infirmier- Autres métiers",
-    "Qualité Hygiène",
-    "Educateur - Moniteur - Animateur",
-    "Infirmier de bloc - IBO-IBODE",
 ]
 
-# --- Ton profil professionnel -----------------------------------
-# Plus c'est détaillé, meilleur sera le matching !
-PROFILE = """
-Profession : Infirmier(ère) diplômé(e) d'état
-Expérience : 5 ans en service de médecine interne et urgences
-Compétences clés : soins infirmiers, gestion de la douleur, soins palliatifs,
-                   éducation thérapeutique, coordination pluridisciplinaire
-Formation complémentaire : DU plaies et cicatrisation
-Localisation souhaitée : Paris et Île-de-France (petite couronne acceptée)
-Type de contrat souhaité : CDI ou CDD long terme
-Temps de travail : temps plein ou 80%
-Ce que je recherche : un service dynamique avec des projets de soins innovants,
-                      possibilités de formation continue
-Ce que je veux éviter : gardes de nuit exclusives, très longues distances
-"""
+# --- Mots-clés à exclure dans le titre (filtre dur) ---
+EXCLUDED_TITLE_KEYWORDS = [
+    "formateur", "formatrice", "juriste",
+    "médecin", "pharmacien", "chirurgien",
+]
 
-# --- Seuil de pertinence (0 à 10) ------------------------------
-# Les offres avec un score >= à ce seuil seront incluses dans le rapport
-MIN_SCORE = 6
+# --- Localisation acceptée (filtre dur) ---
+ACCEPTED_LOCATIONS = ["Paris"]  # Filtre souple : on garde si "Paris" est dans la location
 
-# --- Nombre max d'offres dans l'email --------------------------
-MAX_OFFERS_IN_EMAIL = 15
+# --- Seuil de score LLM ---
+MIN_SCORE = 50  # On envoie par email uniquement les offres >= 50/100
 
-# --- Email -----------------------------------------------------
-EMAIL_SENDER    = "ton.adresse@gmail.com"      # Expéditeur (ton Gmail)
-EMAIL_PASSWORD  = ""                            # App password Gmail (voir README)
-EMAIL_RECIPIENT = "ton.adresse@gmail.com"      # Destinataire (toi-même)
+# --- Nombre max d'offres dans l'email ---
+MAX_OFFERS_IN_EMAIL = 20
+
+# --- API ---
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
+# --- Email ---
+EMAIL_SENDER    = os.getenv("EMAIL_SENDER", "")
+EMAIL_PASSWORD  = os.getenv("EMAIL_PASSWORD", "")
+EMAIL_RECIPIENT = os.getenv("EMAIL_RECIPIENT", "")
 SMTP_SERVER     = "smtp.gmail.com"
 SMTP_PORT       = 587
 
-# --- Clé API Anthropic ------------------------------------------
-# Ne mets JAMAIS ta clé ici en clair si tu utilises GitHub !
-# Elle sera lue depuis les variables d'environnement (voir README)
-import os
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+# --- Profil candidat complet (injecté dans le prompt LLM) ---
+PROFILE = """
+## PROFIL CANDIDAT : Naïl Mulatier
 
-# --- URL cible --------------------------------------------------
-APHP_JOBS_URL = "https://recrutement.aphp.fr/jobs"
+**Formation :** Double diplôme Centrale Lyon + DTU (Danemark)
+Spécialisation : Management Industriel, Recherche Opérationnelle, Analyse de Données
+
+**Expériences :**
+- Mémoire de master : optimisation planification blocs opératoires (2 hôpitaux danois, 20 salles)
+  → Python, R, Gurobi, AnyLogic, modèles stochastiques → -20% retards, -15% inactivité
+- Business Analyst chez Picnic Technologies : SQL, Python, Power BI, Tableau, Docker, CI/CD
+- Stage consultant Hédon Associés : conseil stratégie, évaluation financière R&D
+
+**Compétences techniques :** Python, R, SQL, Power BI, Tableau, Gurobi, Docker, Git, AnyLogic
+
+**Contraintes :** Paris intramuros uniquement | Salaire min 38k€ | Disponible immédiatement
+
+---
+
+## TYPES DE POSTES RECHERCHÉS
+
+**PRIORITÉ 1 — EXCELLENT MATCH (mots-clés : +30 pts chacun)**
+data scientist, data analyst, statisticien, analyste données, ingénieur data,
+business intelligence, BI, PMSI, DIM, entrepôt données santé, SQL, Python, R, SAS
+
+**PRIORITÉ 2 — BON MATCH (mots-clés : +15 pts chacun)**
+cadre administratif DMU, contrôle de gestion, performance, pilotage médico-économique,
+tableaux de bord, indicateurs, EPRD, bloc opératoire, plateau technique, ingénieur hospitalier
+
+**PRIORITÉ 3 — MATCH MOYEN (mots-clés : +10 pts chacun)**
+chef de projet, transformation, optimisation, flux, parcours patient,
+amélioration continue, lean, programmation des soins
+
+---
+
+## POSTES À EXCLURE (score automatiquement < 50)
+- Postes purement juridiques / paramédicaux / médicaux
+
+---
+
+## GRILLE DE SCORING (sur 100)
+
+| Critère | Points |
+|---|---|
+| Mention data, statistique, analyse, BI, PMSI | 30 |
+| Mention Python, R, SQL, SAS, programmation | 20 |
+| Mention bloc opératoire, plateau, flux, optimisation | 15 |
+| Mention pilotage, performance, contrôle de gestion, tableaux de bord | 15 |
+| Niveau bac+5 / master / ingénieur | 10 |
+"""

@@ -1,94 +1,103 @@
-# ============================================================
-#  matcher.py  —  Scoring des offres avec Claude (Anthropic)
-# ============================================================
 import json
 import time
-import anthropic
-from config import ANTHROPIC_API_KEY, PROFILE, MIN_SCORE
+from groq import Groq
+from config import GROQ_API_KEY, PROFILE, MIN_SCORE, EXCLUDED_TITLE_KEYWORDS, ACCEPTED_LOCATIONS
+
+def pre_filter(jobs):
+    filtered, excluded = [], 0
+    for job in jobs:
+        title_lower = job.get("title", "").lower()
+        if any(kw in title_lower for kw in EXCLUDED_TITLE_KEYWORDS):
+            excluded += 1
+            continue
+        if ACCEPTED_LOCATIONS and not any(loc in job.get("location", "") for loc in ACCEPTED_LOCATIONS):
+            excluded += 1
+            continue
+        filtered.append(job)
+    print(f"  🚫 Pré-filtre : {excluded} exclues, {len(filtered)} restantes pour le LLM")
+    return filtered
 
 
-def score_jobs(jobs: list[dict]) -> list[dict]:
-    """
-    Envoie chaque offre à Claude pour évaluer sa pertinence par rapport au profil.
-    Retourne les offres enrichies d'un score et d'une justification, triées par score.
-    """
-    if not ANTHROPIC_API_KEY:
-        raise ValueError("❌ ANTHROPIC_API_KEY manquante dans les variables d'environnement !")
+def score_jobs(jobs):
+    if not GROQ_API_KEY:
+        raise ValueError("❌ GROQ_API_KEY manquante !")
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = Groq(api_key=GROQ_API_KEY)
+    jobs = pre_filter(jobs)
     scored = []
-
-    print(f"\n🤖 Analyse de {len(jobs)} offres avec Claude...")
+    print(f"\n🤖 Scoring LLM de {len(jobs)} offres (~{len(jobs)*3//60} min estimées)...")
 
     for i, job in enumerate(jobs, 1):
-        print(f"  [{i}/{len(jobs)}] {job.get('title', 'Sans titre')[:60]}...")
+        print(f"  [{i}/{len(jobs)}] {job.get('title', '')[:60]}...")
 
         prompt = f"""
-Tu es un assistant de recrutement expert. Analyse l'adéquation entre ce profil candidat et cette offre d'emploi.
+Tu es un assistant expert en recrutement. Analyse l'adéquation entre ce profil et cette offre.
 
-## PROFIL DU CANDIDAT
 {PROFILE}
 
-## OFFRE D'EMPLOI
-Titre      : {job.get('title', 'N/A')}
-Lieu       : {job.get('location', 'N/A')}
-Description: {job.get('description', 'N/A')[:2000]}
+---
 
-## INSTRUCTIONS
-Réponds UNIQUEMENT en JSON valide, sans balises Markdown, avec exactement ce format :
+## OFFRE À ANALYSER
+Titre        : {job.get('title', '')}
+Métier       : {job.get('metier', '')}
+Filière      : {job.get('filiere', '')}
+Hôpital      : {job.get('hopital', '')}
+Localisation : {job.get('location', '')}
+Contrat      : {job.get('contrat', '')}
+Télétravail  : {job.get('teletravail', '')}
+Description  : {job.get('description', '')[:2000]}
+
+---
+
+Réponds UNIQUEMENT en JSON valide, sans Markdown :
 {{
-  "score": <entier de 0 à 10>,
-  "resume": "<1 phrase résumant l'offre>",
-  "points_forts": ["<point 1>", "<point 2>"],
-  "points_faibles": ["<point 1>"],
-  "verdict": "<2-3 phrases expliquant le score>"
+  "score": <entier 0 à 100>,
+  "mots_cles_matches": ["mot1", "mot2"],
+  "raison": "<2-3 phrases>",
+  "points_forts": ["point1", "point2"],
+  "points_faibles": ["point1"]
 }}
-
-Critères de scoring :
-- 9-10 : Correspondance quasi parfaite
-- 7-8  : Très bonne correspondance, quelques petits écarts
-- 5-6  : Correspondance partielle, plusieurs points à vérifier
-- 3-4  : Peu adapté mais pas impossible
-- 0-2  : Inadapté au profil
 """
 
-        try:
-            response = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=500,
-                messages=[{"role": "user", "content": prompt}]
-            )
+        success = False
+        for attempt in range(5):
+            try:
+                response = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=400,
+                )
+                raw = response.choices[0].message.content.strip()
+                raw = raw.replace("```json", "").replace("```", "").strip()
+                analysis = json.loads(raw)
 
-            raw = response.content[0].text.strip()
-            # Nettoyage au cas où Claude renvoie des backticks malgré la consigne
-            raw = raw.replace("```json", "").replace("```", "").strip()
-            analysis = json.loads(raw)
+                job["score"]             = analysis.get("score", 0)
+                job["mots_cles_matches"] = ", ".join(analysis.get("mots_cles_matches", []))
+                job["raison"]            = analysis.get("raison", "")
+                job["points_forts"]      = analysis.get("points_forts", [])
+                job["points_faibles"]    = analysis.get("points_faibles", [])
+                success = True
+                break
 
-            job["score"]         = analysis.get("score", 0)
-            job["resume"]        = analysis.get("resume", "")
-            job["points_forts"]  = analysis.get("points_forts", [])
-            job["points_faibles"]= analysis.get("points_faibles", [])
-            job["verdict"]       = analysis.get("verdict", "")
+            except Exception as e:
+                if "429" in str(e) or "rate_limit" in str(e):
+                    print(f"    ⏳ Rate limit, pause 60s...")
+                    time.sleep(60)
+                else:
+                    print(f"    ⚠️  Erreur : {e}")
+                    break
 
-        except json.JSONDecodeError as e:
-            print(f"    ⚠️  Erreur de parsing JSON : {e}")
-            job["score"]   = 0
-            job["verdict"] = "Erreur d'analyse"
-
-        except Exception as e:
-            print(f"    ⚠️  Erreur API : {e}")
-            job["score"]   = 0
-            job["verdict"] = str(e)
+        if not success:
+            job["score"]             = 0
+            job["raison"]            = "Erreur scoring"
+            job["mots_cles_matches"] = ""
+            job["points_forts"]      = []
+            job["points_faibles"]    = []
 
         scored.append(job)
+        time.sleep(3)  # 20 req/min → sous la limite de 30
 
-        # Petite pause pour respecter les rate limits
-        if i % 10 == 0:
-            time.sleep(2)
-
-    # Trier par score décroissant et filtrer
     scored.sort(key=lambda x: x.get("score", 0), reverse=True)
-    filtered = [j for j in scored if j.get("score", 0) >= MIN_SCORE]
-
-    print(f"\n✅ {len(filtered)} offres retenues (score ≥ {MIN_SCORE}/10)")
-    return filtered
+    result = [j for j in scored if j.get("score", 0) >= MIN_SCORE]
+    print(f"\n✅ {len(result)} offres retenues (score ≥ {MIN_SCORE}/100)")
+    return result
