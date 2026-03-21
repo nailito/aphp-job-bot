@@ -2,6 +2,27 @@
 #  config.py  —  À PERSONNALISER avant de lancer le bot
 # ============================================================
 
+#Scraping
+# Métiers à exclure du scraping
+EXCLUDED_METIERS = [
+    "Infirmier",
+    "Psychologue",
+    "Aide-soignant",
+    "Technicien de laboratoire",
+    "Infirmier puériculteur",
+    "Encadrement Maïeutique",
+    "Infirmier de bloc",
+    "Auxiliaire de puériculture",
+    "Assistanat secrétariat - secrétariat",
+    "Responsable RH - Encadrant RH",    
+    "Secrétariat médical - Assistanat médical",  
+    "Soins, paramédical - Autres métiers",
+    "Infirmier- Autres métiers",
+    "Qualité Hygiène",
+    "Educateur - Moniteur - Animateur",
+    "Infirmier de bloc - IBO-IBODE"
+]
+
 # --- Ton profil professionnel -----------------------------------
 # Plus c'est détaillé, meilleur sera le matching !
 PROFILE = """
