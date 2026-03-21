@@ -55,6 +55,7 @@ st.sidebar.caption(f"Sync : {str(df_all['last_seen'].max())[:16]}")
 page = st.sidebar.radio("Navigation", [
     "📊 Tableau de bord",
     "🔍 Explorer les offres",
+    "✅ Offres acceptées par l'IA",
     "🆕 Nouvelles offres",
     "🗑️ Offres retirées du site",
     "⚙️  Config",
@@ -92,9 +93,9 @@ if page == "📊 Tableau de bord":
         if df_rej_ai.empty:
             st.info("Lance `python filter_ai.py` pour appliquer le filtre IA.")
         else:
-            df_ai = df_rej_ai[["title","metier","rejection_category","rejection_reason","url"]].copy()
+            df_ai = df_rej_ai[["title","metier","filiere","rejection_category","rejection_reason","url"]].copy()
             df_ai["rejection_category"] = df_ai["rejection_category"].map(CATEGORY_LABELS)
-            df_ai.columns = ["Offre","Métier","Raison simplifiée","Raison complète (IA)","URL"]
+            df_ai.columns = ["Offre","Métier","Filière","Raison simplifiée","Raison complète (IA)","URL"]
             st.dataframe(df_ai, use_container_width=True, hide_index=True,
                 column_config={
                     "URL":                  st.column_config.LinkColumn("Lien", display_text="Voir →"),
@@ -183,3 +184,25 @@ elif page == "⚙️  Config":
     fil = df_active["filiere"].value_counts().reset_index()
     fil.columns = ["Filière","Offres"]
     st.dataframe(fil, use_container_width=True, hide_index=True)
+
+
+elif page == "✅ Offres acceptées par l'IA":
+    st.title("✅ Offres acceptées par le filtre IA")
+
+    df_passed = df_active[df_active["rejection_category"] == "passed_filter_1"]
+
+    if df_passed.empty:
+        st.info("Lance `python filter_ai.py` pour analyser les offres.")
+    else:
+        st.caption(f"{len(df_passed)} offres acceptées")
+
+        df_p = df_passed[["title", "metier", "filiere", "hopital", "location",
+                           "contrat", "rejection_reason", "url"]].copy()
+        df_p.columns = ["Titre", "Métier", "Filière", "Hôpital", "Lieu",
+                        "Contrat", "Raison (IA)", "URL"]
+        st.dataframe(df_p, use_container_width=True, hide_index=True,
+            column_config={
+                "URL":        st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                "Titre":      st.column_config.TextColumn(width="large"),
+                "Raison (IA)": st.column_config.TextColumn(width="large"),
+            })
