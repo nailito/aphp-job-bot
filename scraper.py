@@ -1,7 +1,6 @@
 import requests
 from datetime import datetime
 from html.parser import HTMLParser
-from bs4 import BeautifulSoup
 
 API_URL = "https://recrutement.aphp.fr/api/search"
 
@@ -9,6 +8,16 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Content-Type": "application/json",
     "Referer": "https://recrutement.aphp.fr/jobs",
+}
+
+# Correspondance des IDs de customTags
+TAG_IDS = {
+    "434": "contrat",
+    "435": "teletravail",
+    "436": "metier",
+    "437": "hopital",
+    "584": "horaire",
+    "585": "temps_travail",
 }
 
 def strip_html(html: str) -> str:
@@ -24,18 +33,14 @@ def strip_html(html: str) -> str:
     s.feed(html or "")
     return s.get_data().strip()
 
-def get_full_description(job_id: str) -> str:
-    """Récupère la description complète depuis la page de l'offre."""
-    try:
-        url = f"https://recrutement.aphp.fr/jobs/{job_id}"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-        main = soup.find("main") or soup.find("article")
-        if main:
-            return main.get_text(separator=" ", strip=True)
-    except Exception as e:
-        print(f"    ⚠️  Erreur détail {job_id}: {e}")
-    return ""
+def parse_tags(custom_tags: list) -> dict:
+    """Extrait les champs utiles depuis les customTags."""
+    result = {}
+    for tag in custom_tags:
+        key = TAG_IDS.get(str(tag.get("id")))
+        if key:
+            result[key] = tag.get("value", "")
+    return result
 
 def scrape_jobs(url=None, max_pages=5) -> list[dict]:
     jobs = []
@@ -63,22 +68,27 @@ def scrape_jobs(url=None, max_pages=5) -> list[dict]:
             print("  ✅ Plus d'offres.")
             break
 
-        for i, o in enumerate(offers):
-            job_id = str(o.get("id", ""))
-            print(f"    [{i+1}/{len(offers)}] Récupération détail {job_id}...")
-            description = get_full_description(job_id)
-
+        for o in offers:
+            tags = parse_tags(o.get("customTags", []))
             jobs.append({
-                "id":          job_id,
-                "title":       o.get("title") or o.get("name") or "Sans titre",
-                "location":    o.get("location") or o.get("site") or "Non précisé",
-                "description": description,
-                "url":         f"https://recrutement.aphp.fr/jobs/{job_id}",
-                "scraped_at":  datetime.now().isoformat(),
+                "id":           str(o.get("id", "")),
+                "title":        o.get("title", "Sans titre").strip(),
+                "location":     o.get("location", "Non précisé"),
+                "metier":       tags.get("metier", ""),
+                "hopital":      tags.get("hopital", ""),
+                "contrat":      tags.get("contrat", ""),
+                "teletravail":  tags.get("teletravail", ""),
+                "horaire":      tags.get("horaire", ""),
+                "temps_travail":tags.get("temps_travail", ""),
+                "filiere":      o.get("jobCategoryLabel", ""),
+                "date_publication": o.get("publicationDate", ""),
+                "description":  strip_html(o.get("description", "")),
+                "url":          f"https://recrutement.aphp.fr/jobs/{o.get('id', '')}",
+                "scraped_at":   datetime.now().isoformat(),
             })
 
         total = data.get("jobs", {}).get("totalCount", "?")
-        print(f"  ✅ Page {page} OK — {len(jobs)} offres cumulées / {total} total")
+        print(f"  ✅ {len(offers)} offres récupérées (total dispo : {total})")
 
     print(f"\n✅ Total scraped : {len(jobs)} offres")
     return jobs
