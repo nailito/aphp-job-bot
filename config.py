@@ -12,6 +12,28 @@ EXCLUDED_METIERS = [
     "Responsable RH - Encadrant RH",
     "Secrétariat médical - Assistanat médical",
     "Soins, paramédical - Autres métiers",
+    "Infirmier de bloc - IBO-IBODE",
+    "Qualité Hygiène",
+    "Cuisinier - Agent de restauration- Hôtellerie",
+    "Administration RH - chargé de/gestionnaire RH",
+    "Assistant Social",
+    "Educateur - Moniteur - Animateur",
+    "Infirmier- Autres métiers",
+    "Secrétariat médical - Assistanat médical",
+    "Infirmier puériculteur",
+    "Brancardier",
+    "Diététicien - Diététique",
+    "Ambulancier",
+    "Formateur - Cadre formateur",
+    "Paie",
+    "Médecin",
+    "Management socio-éducatif",
+    "Accueil - Standard - Call center"
+]
+
+EXCLUDED_FILIERES = [
+    "Rééducation",
+    "Paramédical encadrement",
 ]
 
 # --- Mots-clés à exclure dans le titre (filtre dur) ---

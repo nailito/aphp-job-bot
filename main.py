@@ -1,10 +1,10 @@
-from database import get_connection, get_stats, save_scores
-from matcher  import score_jobs
-from config   import EXCLUDED_METIERS
+from database import get_connection, get_stats
+from config   import EXCLUDED_METIERS, EXCLUDED_FILIERES
 import sqlite3
-import pandas as pd
 
 DB_PATH = "aphp_jobs.db"
+
+EXCLUDED_CONTRATS = ["Stage", "CAE"]
 
 def load_active_jobs() -> list[dict]:
     conn = sqlite3.connect(DB_PATH)
@@ -23,15 +23,13 @@ def load_active_jobs() -> list[dict]:
 def mark_rejected(job_id: str, category: str, reason: str):
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
-        UPDATE jobs
-        SET rejection_category = ?, rejection_reason = ?
+        UPDATE jobs SET rejection_category = ?, rejection_reason = ?
         WHERE id = ?
     """, (category, reason, job_id))
     conn.commit()
     conn.close()
 
 def reset_rejections():
-    """Remet à zéro les rejets avant chaque run."""
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         UPDATE jobs
@@ -46,32 +44,38 @@ def main():
     print("  🏥  Bot de veille APHP - Pipeline")
     print("=" * 55)
 
-    # Charger toutes les offres actives depuis la DB
     jobs = load_active_jobs()
     print(f"\n📦 {len(jobs)} offres actives en base")
 
-    # Reset des rejets précédents
     reset_rejections()
 
-    # ── Étape 1 : Filtre métier ──────────────────────────────
-    kept, rejected_metier = [], []
+    # Debug
+    stages = [j for j in jobs if j.get("contrat", "") in EXCLUDED_CONTRATS]
+    #print(f"  🔍 Debug : {len(stages)} offres Stage/CAE trouvées")
+    #for j in stages[:3]:
+    #    print(f"     contrat='{j.get('contrat')}' | repr={repr(j.get('contrat'))}")
+
+    kept, rejected = [], []
+
     for job in jobs:
+        # Filtre métier
         if job.get("metier", "") in EXCLUDED_METIERS:
-            rejected_metier.append(job)
-            mark_rejected(
-                job["id"],
-                "metier_exclu",
-                f"Métier exclu : {job.get('metier', 'inconnu')}"
-            )
+            mark_rejected(job["id"], "metier_exclu", f"Métier exclu : {job.get('metier','')}")
+            rejected.append(job)
+
+        # Filtre contrat
+        elif job.get("contrat", "") in EXCLUDED_CONTRATS:
+            mark_rejected(job["id"], "metier_exclu", f"Contrat exclu : {job.get('contrat','')}")
+            rejected.append(job)
+
+        elif job.get("filiere", "") in EXCLUDED_FILIERES:
+            mark_rejected(job["id"], "metier_exclu", f"Filière exclue : {job.get('filiere','')}")
+            rejected.append(job)    
+
         else:
             kept.append(job)
 
-    print(f"  🚫 Étape 1 — Filtre métier : {len(rejected_metier)} rejetées, {len(kept)} restantes")
-
-    # ── Étape 2 : Scoring IA (quand tu seras prêt) ───────────
-    # scored = score_jobs(kept)
-    # save_scores(scored)
-    # Pour l'instant on saute le scoring
+    print(f"  🚫 Étape 1 — {len(rejected)} rejetées, {len(kept)} restantes")
 
     stats = get_stats()
     print(f"\n📊 Stats DB : {stats}")

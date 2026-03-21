@@ -3,6 +3,7 @@ import time
 from groq import Groq
 from config import GROQ_API_KEY
 import sqlite3
+import re
 
 DB_PATH = "aphp_jobs.db"
 
@@ -107,13 +108,15 @@ def run_filter_1(limit: int = None):
         for attempt in range(5):
             try:
                 response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=200,
                 )
                 raw = response.choices[0].message.content.strip()
-                raw = raw.replace("```json", "").replace("```", "").strip()
-                result = json.loads(raw)
+                match = re.search(r'\{.*?\}', raw, re.DOTALL)
+                if not match:
+                    raise ValueError(f"Pas de JSON : {raw[:80]}")
+                result = json.loads(match.group(0))
 
                 if result["resultat"] == "pass":
                     mark_passed(job["id"])
@@ -134,7 +137,6 @@ def run_filter_1(limit: int = None):
                 print(f"    ⚠️  Erreur : {err}")
                 if "429" in err or "rate_limit" in err:
                     if "per day" in err or "TPD" in err:
-                        import re
                         match = re.search(r'try again in (.+?)\.', err)
                         wait_msg = f"Réessaie dans : {match.group(1)}" if match else ""
                         print(f"    🛑 Limite journalière ! {wait_msg}")
@@ -157,4 +159,4 @@ def run_filter_1(limit: int = None):
 
 
 if __name__ == "__main__":
-    run_filter_1()
+    run_filter_1(limit=50)

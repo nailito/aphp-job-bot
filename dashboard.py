@@ -6,41 +6,24 @@ from config import EXCLUDED_METIERS
 
 DB_PATH = "aphp_jobs.db"
 
-st.set_page_config(
-    page_title="Veille APHP",
-    page_icon="🏥",
-    layout="wide",
-)
+st.set_page_config(page_title="Veille APHP", page_icon="🏥", layout="wide")
 
-# ── CSS ────────────────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-.metric-card {
-    background: #f8f9fa;
-    border-radius: 12px;
-    padding: 16px 20px;
-    border: 1px solid #e9ecef;
-    text-align: center;
+CATEGORY_LABELS = {
+    "metier_exclu":        "Hors métier / contrat ciblé",
+    "diplome_paramedical": "Diplôme paramédical requis",
+    "surqualification":    "Surqualification / poste non-cadre",
+    "passed_filter_1":     "✅ Passe filtre IA",
+    "profil_inadequat":    "Profil inadéquat",
 }
-.metric-num  { font-size: 32px; font-weight: 600; color: #1a1a2e; }
-.metric-sub  { font-size: 13px; color: #6c757d; margin-top: 4px; }
-.metric-diff { font-size: 12px; margin-top: 6px; }
-.new-badge  { background:#dbeafe; color:#1d4ed8; padding:2px 8px;
-               border-radius:10px; font-size:11px; font-weight:500; }
-.gone-badge { background:#fee2e2; color:#dc2626; padding:2px 8px;
-               border-radius:10px; font-size:11px; font-weight:500; }
-</style>
-""", unsafe_allow_html=True)
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def load_data():
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql("""
         SELECT id, title, metier, filiere, hopital, location,
-               contrat, teletravail, horaire, temps_travail,
-               date_publication, url, score, mots_cles_matches,
-               raison, first_seen, last_seen, status
+               contrat, teletravail, date_publication, url, score,
+               mots_cles_matches, raison, rejection_category,
+               rejection_reason, first_seen, last_seen, status
         FROM jobs
     """, conn)
     conn.close()
@@ -48,338 +31,155 @@ def load_data():
     df["first_seen"]       = pd.to_datetime(df["first_seen"],       errors="coerce")
     return df
 
-def score_badge(score):
-    if score is None or pd.isna(score):
-        return "–"
-    score = int(score)
-    if score >= 70:
-        return f"🟢 {score}"
-    if score >= 50:
-        return f"🟡 {score}"
-    return f"🔴 {score}"
-
-# ── Load ───────────────────────────────────────────────────────────────────────
 try:
     df_all = load_data()
 except Exception:
     st.error("Base de données introuvable. Lance `python main.py` d'abord.")
     st.stop()
 
-today = datetime.now().date()
 df_active  = df_all[df_all["status"] == "active"]
 df_removed = df_all[df_all["status"] == "removed"]
-df_new     = df_active[df_active["first_seen"].dt.date == today]
+df_new     = df_active[df_active["first_seen"].dt.date == datetime.now().date()]
 
-# ── Sidebar ────────────────────────────────────────────────────────────────────
+n_total        = len(df_active)
+df_rej_metier  = df_active[df_active["rejection_category"] == "metier_exclu"]
+n_apres_metier = n_total - len(df_rej_metier)
+df_rej_ai      = df_active[df_active["rejection_category"].isin([
+    "diplome_paramedical", "surqualification", "profil_inadequat"
+])]
+n_passed_ai    = len(df_active[df_active["rejection_category"] == "passed_filter_1"])
+n_scored       = len(df_active[df_active["score"].notna()])
+
 st.sidebar.title("🏥 Veille APHP")
-st.sidebar.caption(f"Dernière sync : {df_all['last_seen'].max()[:16] if not df_all.empty else '–'}")
-
+st.sidebar.caption(f"Sync : {str(df_all['last_seen'].max())[:16]}")
 page = st.sidebar.radio("Navigation", [
     "📊 Tableau de bord",
     "🔍 Explorer les offres",
     "🆕 Nouvelles offres",
     "🗑️ Offres retirées du site",
-    "❌ Offres rejetées",
-    "⚙️  Filtres & Config",
+    "⚙️  Config",
 ])
 
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 1 — TABLEAU DE BORD
-# ══════════════════════════════════════════════════════════════════════════════
 if page == "📊 Tableau de bord":
     st.title("📊 Tableau de bord")
 
-    # KPIs
     col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown(f"""
-        <div class='metric-card'>
-            <div class='metric-num'>{len(df_active):,}</div>
-            <div class='metric-sub'>Offres actives</div>
-        </div>""", unsafe_allow_html=True)
-    with col2:
-        df_filtered = df_active[~df_active["metier"].isin(EXCLUDED_METIERS)]
-        st.markdown(f"""
-        <div class='metric-card'>
-            <div class='metric-num'>{len(df_filtered):,}</div>
-            <div class='metric-sub'>Après filtre métier</div>
-            <div class='metric-diff'>–{len(df_active) - len(df_filtered)} exclus</div>
-        </div>""", unsafe_allow_html=True)
-    with col3:
-        n_scored = df_active[df_active["score"].notna()]
-        st.markdown(f"""
-        <div class='metric-card'>
-            <div class='metric-num'>{len(n_scored):,}</div>
-            <div class='metric-sub'>Offres scorées</div>
-        </div>""", unsafe_allow_html=True)
-    with col4:
-        st.markdown(f"""
-        <div class='metric-card'>
-            <div class='metric-num'>{len(df_new):,}</div>
-            <div class='metric-sub'>Nouvelles aujourd'hui</div>
-            <div class='metric-diff'><span class='new-badge'>NEW</span></div>
-        </div>""", unsafe_allow_html=True)
+    col1.metric("Total APHP",           f"{n_total:,}")
+    col2.metric("Après filtre métier",  f"{n_apres_metier:,}", f"-{len(df_rej_metier)}")
+    col3.metric("Après filtre IA",      f"{n_passed_ai:,}",    f"-{len(df_rej_ai)}")
+    col4.metric("Score profil complet", f"{n_scored:,}",        "À venir" if n_scored == 0 else None)
 
     st.divider()
 
-    # Entonnoir
-    st.subheader("Entonnoir de filtrage")
-    df_scored_good = n_scored[n_scored["score"] >= 70]
-    funnel_data = pd.DataFrame({
-        "Étape":  ["1. Total APHP", "2. Filtre métier", "3. Scorées", "4. Score ≥ 70"],
-        "Offres": [len(df_active), len(df_filtered), len(n_scored), len(df_scored_good)],
-    })
-    st.bar_chart(funnel_data.set_index("Étape"))
+    tab1, tab2 = st.tabs([
+        f"❌ Rejetées filtre métier/contrat ({len(df_rej_metier)})",
+        f"🤖 Rejetées filtre IA ({len(df_rej_ai)})",
+    ])
 
-    st.divider()
-    col_a, col_b = st.columns(2)
+    with tab1:
+        if df_rej_metier.empty:
+            st.info("Lance `python main.py` pour appliquer les filtres.")
+        else:
+            df_m = df_rej_metier[["title","metier","contrat","filiere","hopital","location","rejection_reason","url"]].copy()
+            df_m.columns = ["Titre","Métier","Contrat","Filière","Hôpital","Lieu","Raison","URL"]
+            st.dataframe(df_m, use_container_width=True, hide_index=True,
+                column_config={
+                    "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                    "Titre": st.column_config.TextColumn(width="large"),
+                })
 
-    with col_a:
-        st.subheader("Top filières (offres actives)")
-        top_fil = df_active["filiere"].value_counts().head(10).reset_index()
-        top_fil.columns = ["Filière", "Offres"]
-        st.dataframe(top_fil, use_container_width=True, hide_index=True)
+    with tab2:
+        if df_rej_ai.empty:
+            st.info("Lance `python filter_ai.py` pour appliquer le filtre IA.")
+        else:
+            df_ai = df_rej_ai[["title","metier","rejection_category","rejection_reason","url"]].copy()
+            df_ai["rejection_category"] = df_ai["rejection_category"].map(CATEGORY_LABELS)
+            df_ai.columns = ["Offre","Métier","Raison simplifiée","Raison complète (IA)","URL"]
+            st.dataframe(df_ai, use_container_width=True, hide_index=True,
+                column_config={
+                    "URL":                  st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                    "Offre":                st.column_config.TextColumn(width="large"),
+                    "Raison complète (IA)": st.column_config.TextColumn(width="large"),
+                })
 
-    with col_b:
-        st.subheader("Top métiers (offres actives)")
-        top_met = df_active["metier"].value_counts().head(10).reset_index()
-        top_met.columns = ["Métier", "Offres"]
-        st.dataframe(top_met, use_container_width=True, hide_index=True)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 2 — EXPLORER LES OFFRES
-# ══════════════════════════════════════════════════════════════════════════════
 elif page == "🔍 Explorer les offres":
     st.title("🔍 Explorer les offres")
 
-    # Filtres
     with st.expander("Filtres", expanded=True):
         col1, col2, col3 = st.columns(3)
-        with col1:
-            search = st.text_input("Recherche (titre / description)", "")
-        with col2:
-            filieres = ["Toutes"] + sorted(df_active["filiere"].dropna().unique().tolist())
-            filiere_sel = st.selectbox("Filière", filieres)
-        with col3:
-            contrats = ["Tous"] + sorted(df_active["contrat"].dropna().unique().tolist())
-            contrat_sel = st.selectbox("Contrat", contrats)
+        search      = col1.text_input("Recherche titre", "")
+        filiere_sel = col2.selectbox("Filière", ["Toutes"] + sorted(df_active["filiere"].dropna().unique().tolist()))
+        contrat_sel = col3.selectbox("Contrat", ["Tous"]   + sorted(df_active["contrat"].dropna().unique().tolist()))
+        col4, col5  = st.columns(2)
+        exclure     = col4.checkbox("Appliquer filtre métiers/contrats", value=True)
+        only_passed = col5.checkbox("Uniquement offres passant le filtre IA", value=False)
 
-        col4, col5 = st.columns(2)
-        with col4:
-            exclure_metiers = st.checkbox("Appliquer filtre métiers (config.py)", value=True)
-        with col5:
-            only_scored = st.checkbox("Uniquement les offres scorées", value=False)
-
-    # Application des filtres
     df_view = df_active.copy()
-
-    if exclure_metiers:
-        df_view = df_view[~df_view["metier"].isin(EXCLUDED_METIERS)]
+    if exclure:
+        df_view = df_view[df_view["rejection_category"] != "metier_exclu"]
     if search:
-        mask = (
-            df_view["title"].str.contains(search, case=False, na=False) |
-            df_view["description"].str.contains(search, case=False, na=False)
-        )
-        df_view = df_view[mask]
+        df_view = df_view[df_view["title"].str.contains(search, case=False, na=False)]
     if filiere_sel != "Toutes":
         df_view = df_view[df_view["filiere"] == filiere_sel]
     if contrat_sel != "Tous":
         df_view = df_view[df_view["contrat"] == contrat_sel]
-    if only_scored:
-        df_view = df_view[df_view["score"].notna()]
+    if only_passed:
+        df_view = df_view[df_view["rejection_category"] == "passed_filter_1"]
 
     df_view = df_view.sort_values("date_publication", ascending=False)
+    st.caption(f"{len(df_view)} offres")
 
-    st.caption(f"{len(df_view)} offres affichées")
-
-    # Tableau
-    cols_display = ["title", "metier", "filiere", "hopital", "location",
-                    "contrat", "teletravail", "score", "date_publication", "url"]
-    df_display = df_view[cols_display].copy()
-    df_display["score"] = df_display["score"].apply(
-        lambda x: score_badge(x) if pd.notna(x) else "–"
-    )
-    df_display.columns = ["Titre", "Métier", "Filière", "Hôpital", "Lieu",
-                           "Contrat", "Télétravail", "Score", "Date pub.", "URL"]
-
-    st.dataframe(
-        df_display,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
-            "Titre": st.column_config.TextColumn(width="large"),
-        }
-    )
-
-    # Détail d'une offre
-    st.divider()
-    st.subheader("Détail d'une offre")
-    selected_title = st.selectbox(
-        "Sélectionne une offre",
-        ["–"] + df_view["title"].tolist()
-    )
-    if selected_title != "–":
-        row = df_view[df_view["title"] == selected_title].iloc[0]
-        col_a, col_b = st.columns([2, 1])
-        with col_a:
-            st.markdown(f"### {row['title']}")
-            st.markdown(f"**🏥 {row['hopital']}** · 📍 {row['location']}")
-            st.markdown(f"**Contrat :** {row['contrat']} | **Télétravail :** {row['teletravail']}")
-            if pd.notna(row.get("score")):
-                st.markdown(f"**Score :** {score_badge(row['score'])}/100")
-                st.markdown(f"**Mots-clés :** {row.get('mots_cles_matches','–')}")
-                st.markdown(f"**Analyse :** {row.get('raison','–')}")
-            st.link_button("Voir l'offre sur aphp.fr →", row["url"])
-        with col_b:
-            st.markdown("**Description**")
-            st.text_area("", row.get("description", ""), height=300, label_visibility="collapsed")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 3 — NOUVELLES OFFRES
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "🆕 Nouvelles offres":
-    st.title("🆕 Nouvelles offres")
-
-    if df_new.empty:
-        st.info("Aucune nouvelle offre aujourd'hui. Relance `python main.py` pour synchroniser.")
-    else:
-        df_new_filtered = df_new[~df_new["metier"].isin(EXCLUDED_METIERS)]
-        st.caption(f"{len(df_new_filtered)} nouvelles offres aujourd'hui (après filtre métier)")
-
-        for _, row in df_new_filtered.iterrows():
-            with st.expander(f"🆕 {row['title']} — {row['hopital']}"):
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.markdown(f"**Métier :** {row['metier']} | **Filière :** {row['filiere']}")
-                    st.markdown(f"**Lieu :** {row['location']} | **Contrat :** {row['contrat']}")
-                    st.link_button("Voir l'offre →", row["url"])
-                with col2:
-                    if pd.notna(row.get("score")):
-                        st.metric("Score", f"{int(row['score'])}/100")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 4 — OFFRES RETIRÉES
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "🗑️ Offres retirées":
-    st.title("🗑️ Offres retirées du site")
-
-    if df_removed.empty:
-        st.info("Aucune offre retirée enregistrée.")
-    else:
-        st.caption(f"{len(df_removed)} offres retirées au total")
-        df_rem_display = df_removed[["title", "metier", "hopital", "contrat", "last_seen"]].copy()
-        df_rem_display.columns = ["Titre", "Métier", "Hôpital", "Contrat", "Dernière vue"]
-        st.dataframe(df_rem_display, use_container_width=True, hide_index=True)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE 5 — CONFIG
-# ══════════════════════════════════════════════════════════════════════════════
-elif page == "⚙️  Filtres & Config":
-    st.title("⚙️ Filtres & Configuration")
-
-    st.subheader("Métiers exclus (config.py)")
-    st.caption("Ces métiers sont filtrés avant le scoring IA.")
-    for m in EXCLUDED_METIERS:
-        st.markdown(f"- ~~{m}~~")
-
-    st.divider()
-    st.subheader("Distribution des métiers (offres actives)")
-    st.caption("Utilise ce tableau pour identifier les métiers à ajouter dans EXCLUDED_METIERS.")
-    met_count = df_active["metier"].value_counts().reset_index()
-    met_count.columns = ["Métier", "Offres"]
-    met_count["Exclu ?"] = met_count["Métier"].apply(
-        lambda x: "✅ Exclu" if x in EXCLUDED_METIERS else "–"
-    )
-    st.dataframe(met_count, use_container_width=True, hide_index=True)
-
-    st.divider()
-    st.subheader("Distribution des filières")
-    fil_count = df_active["filiere"].value_counts().reset_index()
-    fil_count.columns = ["Filière", "Offres"]
-    st.dataframe(fil_count, use_container_width=True, hide_index=True)
-
-elif page == "❌ Offres rejetées":
-    st.title("❌ Offres rejetées")
-
-    conn = sqlite3.connect(DB_PATH)
-    df_rej = pd.read_sql("""
-        SELECT title, metier, filiere, hopital, location,
-               rejection_category, rejection_reason, url
-        FROM jobs
-        WHERE rejection_category IS NOT NULL
-        ORDER BY rejection_category, title
-    """, conn)
-    conn.close()
-
-    if df_rej.empty:
-        st.info("Aucune offre rejetée. Lance `python main.py` pour appliquer les filtres.")
-        st.stop()
-
-    # KPIs par catégorie
-    col1, col2, col3 = st.columns(3)
-    cats = df_rej["rejection_category"].value_counts()
-
-    with col1:
-        n = cats.get("metier_exclu", 0)
-        st.markdown(f"""
-        <div class='metric-card'>
-            <div class='metric-num'>{n}</div>
-            <div class='metric-sub'>Hors métier ciblé</div>
-        </div>""", unsafe_allow_html=True)
-    with col2:
-        n = cats.get("titre_non_pertinent", 0)
-        st.markdown(f"""
-        <div class='metric-card'>
-            <div class='metric-num'>{n}</div>
-            <div class='metric-sub'>Titre non pertinent</div>
-        </div>""", unsafe_allow_html=True)
-    with col3:
-        n = cats.get("profil_inadequat", 0)
-        st.markdown(f"""
-        <div class='metric-card'>
-            <div class='metric-num'>{n}</div>
-            <div class='metric-sub'>Profil inadéquat</div>
-        </div>""", unsafe_allow_html=True)
-
-    st.divider()
-
-    # Filtre par catégorie
-    categorie_labels = {
-        "metier_exclu":        "🔵 Hors métier ciblé",
-        "titre_non_pertinent": "🟡 Titre non pertinent",
-        "profil_inadequat":    "🔴 Profil inadéquat",
-    }
-    categories_dispo = ["Toutes"] + [
-        categorie_labels.get(c, c)
-        for c in df_rej["rejection_category"].unique()
-    ]
-    cat_sel = st.selectbox("Filtrer par catégorie", categories_dispo)
-
-    df_view = df_rej.copy()
-    if cat_sel != "Toutes":
-        cat_key = {v: k for k, v in categorie_labels.items()}.get(cat_sel, cat_sel)
-        df_view = df_view[df_view["rejection_category"] == cat_key]
-
-    st.caption(f"{len(df_view)} offres rejetées affichées")
-
-    df_view["Catégorie"] = df_view["rejection_category"].map(categorie_labels)
-    df_display = df_view[[
-        "title", "metier", "hopital", "location",
-        "Catégorie", "rejection_reason", "url"
-    ]].copy()
-    df_display.columns = [
-        "Titre", "Métier", "Hôpital", "Lieu",
-        "Catégorie", "Raison", "URL"
-    ]
-
-    st.dataframe(
-        df_display,
-        use_container_width=True,
-        hide_index=True,
+    df_d = df_view[["title","metier","filiere","hopital","location","contrat","teletravail","date_publication","url"]].copy()
+    df_d.columns = ["Titre","Métier","Filière","Hôpital","Lieu","Contrat","Télétravail","Date","URL"]
+    st.dataframe(df_d, use_container_width=True, hide_index=True,
         column_config={
             "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
             "Titre": st.column_config.TextColumn(width="large"),
-            "Raison": st.column_config.TextColumn(width="large"),
-        }
-    )
+        })
+
+    st.divider()
+    selected = st.selectbox("Détail d'une offre", ["–"] + df_view["title"].tolist())
+    if selected != "–":
+        row = df_view[df_view["title"] == selected].iloc[0]
+        st.markdown(f"### {row['title']}")
+        st.markdown(f"**🏥 {row['hopital']}** · 📍 {row['location']} · {row['contrat']}")
+        st.link_button("Voir l'offre →", row["url"])
+
+elif page == "🆕 Nouvelles offres":
+    st.title("🆕 Nouvelles offres")
+    df_nf = df_new[df_new["rejection_category"] != "metier_exclu"]
+    st.caption(f"{len(df_nf)} nouvelles offres aujourd'hui")
+    if df_nf.empty:
+        st.info("Aucune nouvelle offre aujourd'hui.")
+    else:
+        for _, row in df_nf.iterrows():
+            with st.expander(f"🆕 {row['title']} — {row['hopital']}"):
+                st.markdown(f"**Métier :** {row['metier']} | **Lieu :** {row['location']} | **Contrat :** {row['contrat']}")
+                st.link_button("Voir l'offre →", row["url"])
+
+elif page == "🗑️ Offres retirées du site":
+    st.title("🗑️ Offres retirées du site")
+    if df_removed.empty:
+        st.info("Aucune offre retirée.")
+    else:
+        st.caption(f"{len(df_removed)} offres retirées")
+        df_r = df_removed[["title","metier","hopital","contrat","last_seen"]].copy()
+        df_r.columns = ["Titre","Métier","Hôpital","Contrat","Dernière vue"]
+        st.dataframe(df_r, use_container_width=True, hide_index=True)
+
+elif page == "⚙️  Config":
+    st.title("⚙️ Configuration")
+    st.subheader("Métiers exclus")
+    for m in EXCLUDED_METIERS:
+        st.markdown(f"- ~~{m}~~")
+    st.divider()
+    st.subheader("Distribution des métiers")
+    met = df_active["metier"].value_counts().reset_index()
+    met.columns = ["Métier","Offres"]
+    met["Exclu ?"] = met["Métier"].apply(lambda x: "✅" if x in EXCLUDED_METIERS else "–")
+    st.dataframe(met, use_container_width=True, hide_index=True)
+    st.divider()
+    st.subheader("Distribution des filières")
+    fil = df_active["filiere"].value_counts().reset_index()
+    fil.columns = ["Filière","Offres"]
+    st.dataframe(fil, use_container_width=True, hide_index=True)
