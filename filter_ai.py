@@ -73,7 +73,7 @@ Description : {description}
 
 ### RÈGLE 1 — REJET DIPLÔME PARAMÉDICAL
 Si l'offre exige un diplôme paramédical ou médical comme condition obligatoire :
-diplôme d'État infirmier, DEI, IBODE, IADE, sage-femme, aide-soignant,
+diplôme d'État infirmier, DEI, IBODE, IADE, sage-femme, aide-soignant,cadre de santé,
 auxiliaire de puériculture, DTS manipulateur, électroradiologie...
 → résultat = "reject", categorie = "diplome_paramedical"
 
