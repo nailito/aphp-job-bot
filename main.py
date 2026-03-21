@@ -1,47 +1,33 @@
-# ============================================================
-#  main.py  —  Orchestrateur du bot APHP
-# ============================================================
-import sys
-from scraper  import scrape_jobs
-from matcher  import score_jobs
-from notifier import send_email
-from config   import APHP_JOBS_URL, MAX_OFFERS_IN_EMAIL
-
+import csv
+from datetime import datetime
+from scraper import scrape_jobs
+from config import APHP_JOBS_URL
 
 def main():
     print("=" * 55)
     print("  🏥  Bot de veille APHP - Démarrage")
     print("=" * 55)
 
-    # ── 1. Scraping ──────────────────────────────────────────
-    try:
-        jobs = scrape_jobs(APHP_JOBS_URL, max_pages=5)
-    except Exception as e:
-        print(f"❌ Erreur de scraping : {e}")
-        sys.exit(1)
+    # Scrape 1 seule page (20 offres) et on garde les 5 premières
+    jobs = scrape_jobs(APHP_JOBS_URL, max_pages=1)
+    jobs = jobs[:5]
+    print(f"\n📋 {len(jobs)} offres récupérées pour le test\n")
 
-    if not jobs:
-        print("⚠️  Aucune offre trouvée. Vérifier le sélecteur CSS du scraper.")
-        send_email([])   # Email vide pour signaler le problème
-        sys.exit(0)
+    # Affichage
+    for i, job in enumerate(jobs, 1):
+        print(f"[{i}] {job['title']}")
+        print(f"     📍 {job['location']}")
+        print(f"     🔗 {job['url']}")
+        print()
 
-    # ── 2. Scoring avec Claude ───────────────────────────────
-    try:
-        scored_jobs = score_jobs(jobs)
-    except Exception as e:
-        print(f"❌ Erreur de scoring : {e}")
-        sys.exit(1)
+    # Export CSV
+    filename = f"offres_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["id", "title", "location", "url", "description", "scraped_at"])
+        writer.writeheader()
+        writer.writerows(jobs)
 
-    # ── 3. Limiter au top N ──────────────────────────────────
-    top_jobs = scored_jobs[:MAX_OFFERS_IN_EMAIL]
-
-    # ── 4. Envoi de l'email ──────────────────────────────────
-    send_email(top_jobs)
-
-    print("\n" + "=" * 55)
-    print(f"  ✅  Terminé — {len(top_jobs)} offre(s) envoyée(s)")
-    print("=" * 55)
-
+    print(f"✅ Résultats exportés dans : {filename}")
 
 if __name__ == "__main__":
     main()
