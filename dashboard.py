@@ -78,7 +78,8 @@ page = st.sidebar.radio("Navigation", [
     "📊 Tableau de bord",
     "🔍 Explorer les offres",
     "🆕 Nouvelles offres",
-    "🗑️ Offres retirées",
+    "🗑️ Offres retirées du site",
+    "❌ Offres rejetées",
     "⚙️  Filtres & Config",
 ])
 
@@ -297,3 +298,88 @@ elif page == "⚙️  Filtres & Config":
     fil_count = df_active["filiere"].value_counts().reset_index()
     fil_count.columns = ["Filière", "Offres"]
     st.dataframe(fil_count, use_container_width=True, hide_index=True)
+
+elif page == "❌ Offres rejetées":
+    st.title("❌ Offres rejetées")
+
+    conn = sqlite3.connect(DB_PATH)
+    df_rej = pd.read_sql("""
+        SELECT title, metier, filiere, hopital, location,
+               rejection_category, rejection_reason, url
+        FROM jobs
+        WHERE rejection_category IS NOT NULL
+        ORDER BY rejection_category, title
+    """, conn)
+    conn.close()
+
+    if df_rej.empty:
+        st.info("Aucune offre rejetée. Lance `python main.py` pour appliquer les filtres.")
+        st.stop()
+
+    # KPIs par catégorie
+    col1, col2, col3 = st.columns(3)
+    cats = df_rej["rejection_category"].value_counts()
+
+    with col1:
+        n = cats.get("metier_exclu", 0)
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-num'>{n}</div>
+            <div class='metric-sub'>Hors métier ciblé</div>
+        </div>""", unsafe_allow_html=True)
+    with col2:
+        n = cats.get("titre_non_pertinent", 0)
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-num'>{n}</div>
+            <div class='metric-sub'>Titre non pertinent</div>
+        </div>""", unsafe_allow_html=True)
+    with col3:
+        n = cats.get("profil_inadequat", 0)
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-num'>{n}</div>
+            <div class='metric-sub'>Profil inadéquat</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.divider()
+
+    # Filtre par catégorie
+    categorie_labels = {
+        "metier_exclu":        "🔵 Hors métier ciblé",
+        "titre_non_pertinent": "🟡 Titre non pertinent",
+        "profil_inadequat":    "🔴 Profil inadéquat",
+    }
+    categories_dispo = ["Toutes"] + [
+        categorie_labels.get(c, c)
+        for c in df_rej["rejection_category"].unique()
+    ]
+    cat_sel = st.selectbox("Filtrer par catégorie", categories_dispo)
+
+    df_view = df_rej.copy()
+    if cat_sel != "Toutes":
+        cat_key = {v: k for k, v in categorie_labels.items()}.get(cat_sel, cat_sel)
+        df_view = df_view[df_view["rejection_category"] == cat_key]
+
+    st.caption(f"{len(df_view)} offres rejetées affichées")
+
+    df_view["Catégorie"] = df_view["rejection_category"].map(categorie_labels)
+    df_display = df_view[[
+        "title", "metier", "hopital", "location",
+        "Catégorie", "rejection_reason", "url"
+    ]].copy()
+    df_display.columns = [
+        "Titre", "Métier", "Hôpital", "Lieu",
+        "Catégorie", "Raison", "URL"
+    ]
+
+    st.dataframe(
+        df_display,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
+            "Titre": st.column_config.TextColumn(width="large"),
+            "Raison": st.column_config.TextColumn(width="large"),
+        }
+    )
