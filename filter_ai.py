@@ -9,11 +9,11 @@ DB_PATH = "aphp_jobs.db"
 
 # Mots-clés qui garantissent un passage automatique SANS appel LLM
 PASS_KEYWORDS = [
-    "master", "bac+5", "bac + 5", "diplôme d'ingénieur", "diplome d'ingenieur",
+    "bac+5", "bac + 5", "diplôme d'ingénieur", "diplome d'ingenieur",
     "école d'ingénieur", "ecole d'ingenieur", "ingénieur ou", "ingénieur et",
     "grande école", "grande ecole", "école de commerce", "ecole de commerce",
-    "msc", "mba", "doctorat", "phd", "ph.d", "bac +5",
-    "niveau master", "niveau ingénieur", "formation bac+5",
+    "msc", "doctorat", "phd", "ph.d", "bac +5",
+     "niveau ingénieur", "formation bac+5",
     "diplôme de niveau", "niveau 7", "niveau i", "niveau ii",
 ]
 
@@ -82,32 +82,45 @@ hospitalier NE signifie PAS que c'est un poste paramédical. Un électricien,
 plombier, technicien de maintenance dans un hôpital = surqualification (Règle 2),
 pas diplôme paramédical.
 
-### RÈGLE 2 — REJET SURQUALIFICATION
-Rejeter si le poste est clairement non-cadre et sans dimension analytique/management,
-ET que le niveau de diplôme requis est inférieur à Bac+5.
+### RÈGLE 2 — REJET : POSTE TROP BAS NIVEAU POUR UN BAC+5
+Rejeter si le poste est clairement destiné à un niveau CAP/BEP/Bac/Bac+2 :
+- Poste technique opérationnel sans encadrement : électricien, plombier,
+  magasinier, agent logistique, technicien de maintenance, cuisinier,
+  agent de restauration, brancardier, agent de stérilisation
+- Poste administratif d'exécution : secrétaire, standardiste, agent d'accueil,
+  agent de facturation, gestionnaire de stocks
+- Le niveau de diplôme requis est CAP, BEP, Bac, Bac pro, BTS, DUT, Bac+2, Bac+3
 
-Exemples à rejeter :
-- Poste technique opérationnel : électricien, plombier, magasinier, agent logistique,
-  technicien de maintenance, cuisinier, agent de restauration, brancardier
-- Poste administratif pur : secrétaire, standardiste, agent d'accueil, agent de facturation
-- Diplôme requis : CAP, BEP, Bac, Bac pro, BTS, DUT, Bac+2
+→ résultat = "reject", categorie = "surqualification",
+  raison = "Candidat surqualifié : poste de niveau [CAP/Bac/Bac+2] pour un ingénieur Bac+5"
 
-Ne PAS rejeter :
-- Responsable, chef de projet, coordinateur, manager, directeur adjoint
-- Ingénieur, analyste, data, statisticien, chargé de mission
-- Tout poste avec dimension analytique, pilotage ou management d'équipe
-- Si le niveau de diplôme n'est pas précisé → laisser passer
+### RÈGLE 3 — WHITELIST : POSTE TYPIQUEMENT OCCUPÉ PAR UN BAC+5
+Si les règles 1 et 2 ne s'appliquent pas, vérifie si le poste est typiquement
+occupé par quelqu'un issu d'une école d'ingénieur ou de commerce Bac+5 (master, doctorat).
 
-### RÈGLE 3 — PASSAGE PAR DÉFAUT
-Dans tous les autres cas, laisser passer.
-→ résultat = "pass"
+→ "pass" si le poste correspond à l'un de ces profils :
+✅ Ingénieur (toute spécialité : biomédical, méthodes, qualité, SI, data...)
+✅ Cadre administratif, chargé de mission, chef de projet
+✅ Contrôleur de gestion, analyste financier, acheteur senior
+✅ Data analyst, statisticien, chercheur, biostatisticien
+✅ Consultant, manager, directeur adjoint, responsable de service
+✅ Juriste, RH senior, communicant senior
+✅ Tout poste où une grande école ou un master est la norme du secteur
+
+→ "reject" si le poste est typiquement occupé par un Bac, BTS ou DUT :
+technicien, opérateur, agent, magasinier, électricien, cuisinier...
+→ "reject" si le poste est pour un profil en droit ou en rh (Juriste, RH...)
+
+En cas de doute → "pass"
 
 ## FORMAT DE RÉPONSE
-Réponds UNIQUEMENT en JSON valide, sans Markdown :
+Tu dois répondre UNIQUEMENT avec le JSON, sans aucun texte avant ou après.
+Pas d'introduction, pas d'explication, pas de conclusion.
+Commence directement par {{ et termine par }}.
 {{
   "resultat": "pass" | "reject",
   "categorie": "diplome_paramedical" | "surqualification" | null,
-  "raison": "<explication courte>"
+  "raison": "<obligatoire : explique en 1 phrase pourquoi pass ou reject>"
 }}
 """
 
@@ -131,7 +144,7 @@ def run_filter_1(limit: int = None):
         if job.get("metier", "") in PASS_METIERS:
             mark_passed(job["id"], f"Passage automatique : métier qualifiant '{job.get('metier')}'")
             auto_passed += 1
-            print(f"    ✅ Auto-pass métier : '{job.get('metier')}'")
+            print(f"    🙈 Auto-pass métier : '{job.get('metier')}'")
             continue
 
         # ── Pré-check mots-clés Bac+5 → passage automatique sans LLM ──
@@ -139,7 +152,7 @@ def run_filter_1(limit: int = None):
         if kw_found:
             mark_passed(job["id"], f"Passage automatique : mot-clé '{kw_found}' détecté")
             auto_passed += 1
-            print(f"    ✅ Auto-pass : '{kw_found}'")
+            print(f"    🙈 Auto-pass bac+5: '{kw_found}'")
             continue
 
         # ── Appel LLM pour les autres ────────────────────────────────
@@ -154,22 +167,31 @@ def run_filter_1(limit: int = None):
         for attempt in range(5):
             try:
                 response = client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
+                    model="moonshotai/kimi-k2-instruct",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=200,
-                )
+                )   
                 raw = response.choices[0].message.content.strip()
-                match = re.search(r'\{.*?\}', raw, re.DOTALL)
+                match = re.search(r'\{[^{}]*"resultat"[^{}]*\}', raw, re.DOTALL)
+                if not match:
+                    # Tentative plus large
+                    match = re.search(r'\{.*\}', raw, re.DOTALL)
                 if not match:
                     raise ValueError(f"Pas de JSON : {raw[:80]}")
                 result = json.loads(match.group(0))
 
+                raison = result.get("raison", "").strip()
+                if not raison:
+                    raison = f"Pas de raison fournie — résultat brut : {result.get('resultat')}"
+
                 if result["resultat"] == "reject":
-                    mark_rejected(job["id"], result.get("categorie", "surqualification"), result["raison"])
+                    mark_rejected(job["id"], result.get("categorie", "surqualification"), raison)
                     rejected += 1
+                    print(f"    ❌ Rejeté ({result.get('categorie','?')}) : {raison}")
                 else:
-                    mark_passed(job["id"], result.get("raison", "Passe le filtre IA"))
+                    mark_passed(job["id"], raison)
                     passed += 1
+                    print(f"    ✅ Accepté : {raison}")
 
                 success = True
                 break

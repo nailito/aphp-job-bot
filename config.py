@@ -28,7 +28,18 @@ EXCLUDED_METIERS = [
     "Paie",
     "Médecin",
     "Management socio-éducatif",
-    "Accueil - Standard - Call center"
+    "Accueil - Standard - Call center",
+    "ARC- TECH Attaché/technicien en recherche Clinique",
+    "Comptabilité - Facturation - Régie",
+    "Infirmier Pratique Avancée - IPA",
+    "Maïeutique",
+    "Maintenance - Travaux",
+    "Manipulateur en électroradiologie",
+    "Préparateur en pharmacie",
+    "Sécurité au travail et environnement",
+    "Socio-éducatif - Autres métiers",
+    "Support et Exploitation",
+    "Technique - Autres métiers"
 ]
 
 EXCLUDED_FILIERES = [
@@ -37,9 +48,19 @@ EXCLUDED_FILIERES = [
 ]
 
 # --- Mots-clés à exclure dans le titre (filtre dur) ---
-EXCLUDED_TITLE_KEYWORDS = [
+EXCLUDED_TITLE_REJECT_TITLE_KEYWORDS = [
     "formateur", "formatrice", "juriste",
     "médecin", "pharmacien", "chirurgien",
+    "magasinier", "électricien", "plombier", "cuisinier",
+    "agent de restauration", "brancardier", "agent de stérilisation",
+    "technicien de maintenance", "agent logistique", "agent de service",
+    "standardiste", "agent d'accueil", "agent de facturation",
+    "gestionnaire de stocks", "agent d'entretien", "lingère",
+    "chauffeur", "ambulancier",
+    "technicien polyvalent", "technicien de maintenance",
+    "technicien biomédical", "technicien de laboratoire",
+    "technicien en recherche", "technicien d'information médicale",
+    "enseignant en activités physiques",
 ]
 
 # --- Localisation acceptée (filtre dur) ---
@@ -70,13 +91,10 @@ Spécialisation : Management Industriel, Recherche Opérationnelle, Analyse de D
 
 **Expériences :**
 - Mémoire de master : optimisation planification blocs opératoires (2 hôpitaux danois, 20 salles)
-  → Python, R, Gurobi, AnyLogic, modèles stochastiques → -20% retards, -15% inactivité
+  → Python, R, Gurobi, AnyLogic, modèles stochastiques
 - Business Analyst chez Picnic Technologies : SQL, Python, Power BI, Tableau, Docker, CI/CD
-- Stage consultant Hédon Associés : conseil stratégie, évaluation financière R&D
 
 **Compétences techniques :** Python, R, SQL, Power BI, Tableau, Gurobi, Docker, Git, AnyLogic
-
-**Contraintes :** Paris intramuros uniquement | Salaire min 38k€ | Disponible immédiatement
 
 ---
 
