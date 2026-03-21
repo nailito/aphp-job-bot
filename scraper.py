@@ -6,9 +6,12 @@ from html.parser import HTMLParser
 API_URL = "https://recrutement.aphp.fr/api/search"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Content-Type": "application/json",
     "Referer": "https://recrutement.aphp.fr/jobs",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Origin": "https://recrutement.aphp.fr",
 }
 
 TAG_IDS = {
