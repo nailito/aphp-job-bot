@@ -20,7 +20,7 @@ EXCLUDED_METIERS = [
     "Infirmier- Autres métiers",
     "Qualité Hygiène",
     "Educateur - Moniteur - Animateur",
-    "Infirmier de bloc - IBO-IBODE"
+    "Infirmier de bloc - IBO-IBODE",
 ]
 
 # --- Ton profil professionnel -----------------------------------
