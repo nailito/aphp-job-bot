@@ -10,7 +10,7 @@ def main():
     print("=" * 55)
 
     # Scraping toutes les pages (2288 offres / 20 par page = ~115 pages)
-    jobs = scrape_jobs(APHP_JOBS_URL, max_pages=115)
+    jobs = scrape_jobs(APHP_JOBS_URL, max_pages=5)
 
     # Filtre métiers exclus
     avant = len(jobs)

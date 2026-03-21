@@ -63,7 +63,7 @@ Réponds UNIQUEMENT en JSON valide, sans Markdown :
         for attempt in range(5):
             try:
                 response = client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
+                    model="llama-3.1-8b-instant",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=400,
                 )
@@ -80,11 +80,21 @@ Réponds UNIQUEMENT en JSON valide, sans Markdown :
                 break
 
             except Exception as e:
+                print(f"    ⚠️  Erreur : {e}")
                 if "429" in str(e) or "rate_limit" in str(e):
-                    print(f"    ⏳ Rate limit, pause 60s...")
-                    time.sleep(60)
+                    if "per day" in str(e) or "TPD" in str(e):
+                        import re
+                        match = re.search(r'try again in (.+?)\.', str(e))
+                        wait_msg = f"Réessaie dans : {match.group(1)}" if match else ""
+                        print(f"    🛑 Limite journalière atteinte ! {wait_msg}")
+                        print(f"    💾 Sauvegarde des {len(scored)} offres déjà scorées...")
+                        break
+                    else:
+                        print(f"    ⏳ Rate limit/minute, pause 60s...")
+                        time.sleep(60)
                 else:
-                    print(f"    ⚠️  Erreur : {e}")
+                    import traceback
+                    traceback.print_exc()
                     break
 
         if not success:

@@ -42,7 +42,6 @@ def parse_tags(custom_tags: list) -> dict:
     return result
 
 def fetch_page(page: int, retries: int = 3) -> dict | None:
-    """Fetch une page avec retry automatique."""
     payload = {
         "facets": {},
         "currentPage": page,
@@ -65,7 +64,7 @@ def fetch_page(page: int, retries: int = 3) -> dict | None:
     print(f"  ❌ Page {page} abandonnée après {retries} tentatives")
     return None
 
-def scrape_jobs(url=None, max_pages=115) -> list[dict]:
+def scrape_jobs(url=None, max_pages=5) -> list[dict]:
     jobs = []
 
     for page in range(1, max_pages + 1):
@@ -83,26 +82,24 @@ def scrape_jobs(url=None, max_pages=115) -> list[dict]:
         for o in offers:
             tags = parse_tags(o.get("customTags", []))
             jobs.append({
-                "id":            str(o.get("id", "")),
-                "title":         o.get("title", "Sans titre").strip(),
-                "location":      o.get("location", "Non précisé"),
-                "metier":        tags.get("metier", ""),
-                "hopital":       tags.get("hopital", ""),
-                "contrat":       tags.get("contrat", ""),
-                "teletravail":   tags.get("teletravail", ""),
-                "horaire":       tags.get("horaire", ""),
-                "temps_travail": tags.get("temps_travail", ""),
-                "filiere":       o.get("jobCategoryLabel", ""),
+                "id":               str(o.get("id", "")),
+                "title":            o.get("title", "Sans titre").strip(),
+                "location":         o.get("location", "Non précisé"),
+                "metier":           tags.get("metier", ""),
+                "hopital":          tags.get("hopital", ""),
+                "contrat":          tags.get("contrat", ""),
+                "teletravail":      tags.get("teletravail", ""),
+                "horaire":          tags.get("horaire", ""),
+                "temps_travail":    tags.get("temps_travail", ""),
+                "filiere":          o.get("jobCategoryLabel", ""),
                 "date_publication": o.get("publicationDate", ""),
-                "description":   strip_html(o.get("description", "")),
-                "url":           f"https://recrutement.aphp.fr/jobs/{o.get('id', '')}",
-                "scraped_at":    datetime.now().isoformat(),
+                "description":      strip_html(o.get("description", "")),
+                "url":              f"https://recrutement.aphp.fr/jobs/{o.get('id', '')}",
+                "scraped_at":       datetime.now().isoformat(),
             })
 
         total = data.get("jobs", {}).get("totalCount", "?")
         print(f"  ✅ {len(jobs)} offres cumulées / {total} total")
-
-        # Pause entre chaque page pour éviter le blocage
         time.sleep(1)
 
     print(f"\n✅ Total scraped : {len(jobs)} offres")
