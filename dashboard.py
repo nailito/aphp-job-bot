@@ -50,12 +50,19 @@ df_rej_ai      = df_active[df_active["rejection_category"].isin([
 n_passed_ai    = len(df_active[df_active["rejection_category"] == "passed_filter_1"])
 n_scored       = len(df_active[df_active["score"].notna()])
 
+n_a_trier = len(df_active[df_active["rejection_category"] == "a_trier"])
+
+# Dans les métriques, remplace la 3e colonne :
+col3.metric("Après filtre IA", f"{n_passed_ai:,}", 
+            f"-{len(df_rej_ai)} rejetées · {n_a_trier} restantes")
+
 st.sidebar.title("🏥 Veille APHP")
 st.sidebar.caption(f"Sync : {str(df_all['last_seen'].max())[:16]}")
 page = st.sidebar.radio("Navigation", [
     "📊 Tableau de bord",
     "🔍 Explorer les offres",
     "✅ Offres acceptées par l'IA",
+    "📝 À évaluer"
     "🆕 Nouvelles offres",
     "🗑️ Offres retirées du site",
     "⚙️  Config",
@@ -206,3 +213,80 @@ elif page == "✅ Offres acceptées par l'IA":
                 "Titre":      st.column_config.TextColumn(width="large"),
                 "Raison (IA)": st.column_config.TextColumn(width="large"),
             })
+
+elif page == "📝 À évaluer":
+    st.title("📝 À évaluer")
+
+    from database import save_feedback, get_feedbacks, delete_feedback
+    import ast
+
+    feedbacks_existants = {f["job_id"] for f in get_feedbacks()}
+    df_a_evaluer = df_active[
+        (df_active["rejection_category"] == "passed_filter_1") &
+        (~df_active["id"].isin(feedbacks_existants))
+    ].sort_values("date_publication", ascending=False)
+
+    df_deja_evalues = df_active[df_active["id"].isin(feedbacks_existants)]
+
+    tab_eval, tab_done = st.tabs([
+        f"⏳ À évaluer ({len(df_a_evaluer)})",
+        f"✅ Déjà évalués ({len(df_deja_evalues)})",
+    ])
+
+    with tab_eval:
+        if df_a_evaluer.empty:
+            st.info("Toutes les offres ont été évaluées ! 🎉")
+        else:
+            for _, row in df_a_evaluer.iterrows():
+                with st.expander(f"**{row['title']}** — {row['hopital']}"):
+                    st.markdown(f"**Métier :** {row['metier']} | **Filière :** {row['filiere']}")
+                    st.markdown(f"**📍 {row['location']}** | **📄 {row['contrat']}** | **🖥 {row['teletravail']}**")
+                    st.link_button("Voir l'offre →", row["url"])
+                    st.divider()
+
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        btn_top = st.button("⭐ Excellent",       key=f"top_{row['id']}", use_container_width=True)
+                    with col_b:
+                        btn_oui = st.button("👍 Intéressant",     key=f"oui_{row['id']}", use_container_width=True)
+                    with col_c:
+                        btn_non = st.button("👎 Pas intéressant", key=f"non_{row['id']}", use_container_width=True)
+
+                    if btn_top: st.session_state[f"dec_{row['id']}"] = "⭐"
+                    if btn_oui: st.session_state[f"dec_{row['id']}"] = "👍"
+                    if btn_non: st.session_state[f"dec_{row['id']}"] = "👎"
+
+                    if f"dec_{row['id']}" in st.session_state:
+                        dec = st.session_state[f"dec_{row['id']}"]
+                        st.markdown(f"**Décision : {dec}**")
+
+                        commentaire = st.text_area(
+                            "Ton feedback :",
+                            key=f"comment_{row['id']}",
+                            placeholder="Ex: Très bon poste, SQL + Python demandés, mais hôpital trop loin...",
+                            height=80,
+                        )
+
+                        if st.button("💾 Sauvegarder", key=f"save_{row['id']}", use_container_width=True):
+                            save_feedback(row["id"], dec, [], commentaire)
+                            st.success("✅ Sauvegardé !")
+                            st.cache_data.clear()
+                            st.rerun()
+
+    with tab_done:
+        feedbacks = get_feedbacks()
+        if not feedbacks:
+            st.info("Aucun feedback encore.")
+        else:
+            for f in feedbacks:
+                with st.expander(f"{f['decision']} **{f['title']}** — {f['hopital']}"):
+                    st.markdown(f"**Feedback :** {f['commentaire'] or '–'}")
+                    st.markdown(f"**Date :** {f['created_at'][:10]}")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.link_button("Voir l'offre →", f["url"])
+                    with col2:
+                        if st.button("🗑️ Supprimer", key=f"del_{f['job_id']}", use_container_width=True):
+                            delete_feedback(f["job_id"])
+                            st.cache_data.clear()
+                            st.rerun()

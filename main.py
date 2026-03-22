@@ -30,11 +30,13 @@ def mark_rejected(job_id: str, category: str, reason: str):
     conn.close()
 
 def reset_rejections():
+    """Remet à zéro uniquement les rejets métier/contrat, pas les résultats IA."""
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         UPDATE jobs
         SET rejection_category = NULL, rejection_reason = NULL
         WHERE status = 'active'
+        AND rejection_category = 'metier_exclu'
     """)
     conn.commit()
     conn.close()

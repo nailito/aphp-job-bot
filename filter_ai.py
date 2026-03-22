@@ -32,7 +32,7 @@ def load_unfiltered_jobs() -> list[dict]:
         SELECT id, title, metier, filiere, description
         FROM jobs
         WHERE status = 'active'
-        AND rejection_category IS NULL
+        AND (rejection_category IS NULL OR rejection_category = 'a_trier')
     """).fetchall()
     conn.close()
     cols = ["id", "title", "metier", "filiere", "description"]
@@ -104,12 +104,11 @@ occupé par quelqu'un issu d'une école d'ingénieur ou de commerce Bac+5 (maste
 ✅ Contrôleur de gestion, analyste financier, acheteur senior
 ✅ Data analyst, statisticien, chercheur, biostatisticien
 ✅ Consultant, manager, directeur adjoint, responsable de service
-✅ Juriste, RH senior, communicant senior
 ✅ Tout poste où une grande école ou un master est la norme du secteur
 
 → "reject" si le poste est typiquement occupé par un Bac, BTS ou DUT :
 technicien, opérateur, agent, magasinier, électricien, cuisinier...
-→ "reject" si le poste est pour un profil en droit ou en rh (Juriste, RH...)
+→ "reject" si le poste est pour un profil en droit, en enseignement ou en ressources humaines (Juriste, RH, Enseignant...)
 
 En cas de doute → "pass"
 
@@ -200,12 +199,25 @@ def run_filter_1(limit: int = None):
                 err = str(e)
                 print(f"    ⚠️  Erreur : {err}")
                 if "429" in err or "rate_limit" in err:
-                    if "per day" in err or "TPD" in err:
-                        match_wait = re.search(r'try again in (.+?)\.', err)
-                        wait_msg = f"Réessaie dans : {match_wait.group(1)}" if match_wait else ""
-                        print(f"    🛑 Limite journalière ! {wait_msg}")
-                        print(f"    💾 {passed + auto_passed} passées, {rejected} rejetées jusqu'ici")
-                        return
+                    # Remplace le bloc limite journalière :
+            if "per day" in err or "TPD" in err:
+                match_wait = re.search(r'try again in (.+?)\.', err)
+                wait_msg = f"Réessaie dans : {match_wait.group(1)}" if match_wait else ""
+                print(f"    🛑 Limite journalière ! {wait_msg}")
+
+                # Marquer les offres restantes comme "à trier"
+                remaining = jobs[i:]  # toutes les offres pas encore traitées
+                conn = sqlite3.connect(DB_PATH)
+                for remaining_job in remaining:
+                    conn.execute("""
+                        UPDATE jobs SET rejection_category = 'a_trier'
+                        WHERE id = ?
+                    """, (remaining_job["id"],))
+                conn.commit()
+                conn.close()
+                print(f"    💾 {len(remaining)} offres marquées 'à trier' pour la prochaine fois")
+                print(f"    💾 {passed + auto_passed} passées, {rejected} rejetées jusqu'ici")
+                return
                     else:
                         print(f"    ⏳ Rate limit/minute, pause 60s...")
                         time.sleep(60)
