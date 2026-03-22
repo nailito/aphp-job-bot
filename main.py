@@ -1,4 +1,4 @@
-from database import get_connection, get_stats
+as from database import get_connection, get_stats
 from config   import EXCLUDED_METIERS, EXCLUDED_FILIERES
 import sqlite3
 

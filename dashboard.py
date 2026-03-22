@@ -17,11 +17,13 @@ CATEGORY_LABELS = {
 }
 
 @st.cache_data(ttl=30)
+@st.cache_data(ttl=30)
 def load_data():
     conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql("""
         SELECT id, title, metier, filiere, hopital, location,
                contrat, teletravail, date_publication, url, score,
+               priorite, score_raison, score_points_forts, score_points_faibles,
                mots_cles_matches, raison, rejection_category,
                rejection_reason, first_seen, last_seen, status
         FROM jobs
@@ -52,17 +54,13 @@ n_scored       = len(df_active[df_active["score"].notna()])
 
 n_a_trier = len(df_active[df_active["rejection_category"] == "a_trier"])
 
-# Dans les métriques, remplace la 3e colonne :
-col3.metric("Après filtre IA", f"{n_passed_ai:,}", 
-            f"-{len(df_rej_ai)} rejetées · {n_a_trier} restantes")
-
 st.sidebar.title("🏥 Veille APHP")
 st.sidebar.caption(f"Sync : {str(df_all['last_seen'].max())[:16]}")
 page = st.sidebar.radio("Navigation", [
     "📊 Tableau de bord",
     "🔍 Explorer les offres",
     "✅ Offres acceptées par l'IA",
-    "📝 À évaluer"
+    "📝 À évaluer",
     "🆕 Nouvelles offres",
     "🗑️ Offres retirées du site",
     "⚙️  Config",
@@ -79,9 +77,10 @@ if page == "📊 Tableau de bord":
 
     st.divider()
 
-    tab1, tab2 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         f"❌ Rejetées filtre métier/contrat ({len(df_rej_metier)})",
         f"🤖 Rejetées filtre IA ({len(df_rej_ai)})",
+        f"⏳ À trier par IA ({n_a_trier})",
     ])
 
     with tab1:
@@ -108,6 +107,20 @@ if page == "📊 Tableau de bord":
                     "URL":                  st.column_config.LinkColumn("Lien", display_text="Voir →"),
                     "Offre":                st.column_config.TextColumn(width="large"),
                     "Raison complète (IA)": st.column_config.TextColumn(width="large"),
+                })
+
+    with tab3:
+        df_a_trier = df_active[df_active["rejection_category"] == "a_trier"]
+        if df_a_trier.empty:
+            st.info("Aucune offre en attente. Lance `python filter_ai.py` pour continuer.")
+        else:
+            st.caption(f"{len(df_a_trier)} offres en attente d'analyse IA")
+            df_t = df_a_trier[["title","metier","filiere","hopital","location","contrat","url"]].copy()
+            df_t.columns = ["Titre","Métier","Filière","Hôpital","Lieu","Contrat","URL"]
+            st.dataframe(df_t, use_container_width=True, hide_index=True,
+                column_config={
+                    "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                    "Titre": st.column_config.TextColumn(width="large"),
                 })
 
 elif page == "🔍 Explorer les offres":
@@ -196,24 +209,46 @@ elif page == "⚙️  Config":
 elif page == "✅ Offres acceptées par l'IA":
     st.title("✅ Offres acceptées par le filtre IA")
 
-    df_passed = df_active[df_active["rejection_category"] == "passed_filter_1"]
+    df_passed = df_active[df_active["rejection_category"] == "passed_filter_1"].copy()
 
     if df_passed.empty:
         st.info("Lance `python filter_ai.py` pour analyser les offres.")
     else:
-        st.caption(f"{len(df_passed)} offres acceptées")
+        # Séparer scorées et non scorées
+        df_scorees    = df_passed[df_passed["score"].notna()].sort_values("score", ascending=False)
+        df_non_scorees = df_passed[df_passed["score"].isna()]
 
-        df_p = df_passed[["title", "metier", "filiere", "hopital", "location",
-                           "contrat", "rejection_reason", "url"]].copy()
-        df_p.columns = ["Titre", "Métier", "Filière", "Hôpital", "Lieu",
-                        "Contrat", "Raison (IA)", "URL"]
-        st.dataframe(df_p, use_container_width=True, hide_index=True,
-            column_config={
-                "URL":        st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                "Titre":      st.column_config.TextColumn(width="large"),
-                "Raison (IA)": st.column_config.TextColumn(width="large"),
-            })
+        st.caption(f"{len(df_passed)} offres acceptées — {len(df_scorees)} scorées, {len(df_non_scorees)} en attente de score")
 
+        tab_scorees, tab_non_scorees = st.tabs([
+            f"🎯 Scorées ({len(df_scorees)})",
+            f"⏳ En attente de score ({len(df_non_scorees)})",
+        ])
+
+        with tab_scorees:
+            df_s = df_scorees[["score", "priorite", "title", "metier", "filiere",
+                                "hopital", "location", "contrat", "score_raison", "url"]].copy()
+            df_s.columns = ["Score", "Priorité", "Titre", "Métier", "Filière",
+                            "Hôpital", "Lieu", "Contrat", "Analyse IA", "URL"]
+            st.dataframe(df_s, use_container_width=True, hide_index=True,
+                column_config={
+                    "URL":        st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                    "Titre":      st.column_config.TextColumn(width="large"),
+                    "Analyse IA": st.column_config.TextColumn(width="large"),
+                    "Score":      st.column_config.NumberColumn(format="%d/100"),
+                })
+
+        with tab_non_scorees:
+            df_ns = df_non_scorees[["title", "metier", "filiere", "hopital",
+                                     "location", "contrat", "url"]].copy()
+            df_ns.columns = ["Titre", "Métier", "Filière", "Hôpital", "Lieu", "Contrat", "URL"]
+            st.dataframe(df_ns, use_container_width=True, hide_index=True,
+                column_config={
+                    "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                    "Titre": st.column_config.TextColumn(width="large"),
+                })
+            st.info("Lance `python -c \"from scorer import run_scorer; run_scorer()\"`  pour scorer ces offres.")
+            
 elif page == "📝 À évaluer":
     st.title("📝 À évaluer")
 
@@ -242,6 +277,15 @@ elif page == "📝 À évaluer":
                     st.markdown(f"**Métier :** {row['metier']} | **Filière :** {row['filiere']}")
                     st.markdown(f"**📍 {row['location']}** | **📄 {row['contrat']}** | **🖥 {row['teletravail']}**")
                     st.link_button("Voir l'offre →", row["url"])
+
+# Afficher le score si disponible
+                    if pd.notna(row.get("score")):
+                        col_score, col_prio = st.columns(2)
+                        col_score.metric("Score", f"{int(row['score'])}/100")
+                        col_prio.metric("Priorité", row.get("priorite", "–"))
+                        st.markdown(f"**Analyse IA :** {row.get('score_raison', '–')}")
+                        st.divider()
+
                     st.divider()
 
                     col_a, col_b, col_c = st.columns(3)

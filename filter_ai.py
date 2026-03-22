@@ -7,13 +7,12 @@ import sqlite3
 
 DB_PATH = "aphp_jobs.db"
 
-# Mots-clés qui garantissent un passage automatique SANS appel LLM
 PASS_KEYWORDS = [
     "bac+5", "bac + 5", "diplôme d'ingénieur", "diplome d'ingenieur",
     "école d'ingénieur", "ecole d'ingenieur", "ingénieur ou", "ingénieur et",
     "grande école", "grande ecole", "école de commerce", "ecole de commerce",
     "msc", "doctorat", "phd", "ph.d", "bac +5",
-     "niveau ingénieur", "formation bac+5",
+    "niveau ingénieur", "formation bac+5",
     "diplôme de niveau", "niveau 7", "niveau i", "niveau ii",
 ]
 
@@ -24,6 +23,18 @@ PASS_METIERS = [
     "Chefferie de Projet - MOA",
     "Finance - Contrôle de gestion",
     "Gestion médico- administrative, traitement - analyse de l'information médicale",
+]
+
+REJECT_TITLE_KEYWORDS = [
+    "magasinier", "électricien", "plombier", "cuisinier",
+    "agent de restauration", "brancardier", "agent de stérilisation",
+    "agent logistique", "agent de service", "standardiste",
+    "agent d'accueil", "agent de facturation", "gestionnaire de stocks",
+    "agent d'entretien", "lingère", "chauffeur", "ambulancier",
+    "technicien polyvalent", "technicien de maintenance",
+    "technicien biomédical", "technicien de laboratoire",
+    "technicien en recherche", "technicien d'information médicale",
+    "enseignant en activités physiques",
 ]
 
 def load_unfiltered_jobs() -> list[dict]:
@@ -53,7 +64,6 @@ def mark_passed(job_id: str, reason: str = "Passe le filtre IA étape 1"):
     conn.close()
 
 def check_pass_keywords(job: dict) -> str | None:
-    """Retourne le mot-clé trouvé si l'offre mentionne Bac+5, sinon None."""
     text = (job.get("title", "") + " " + job.get("description", "")).lower()
     for kw in PASS_KEYWORDS:
         if kw in text:
@@ -73,7 +83,7 @@ Description : {description}
 
 ### RÈGLE 1 — REJET DIPLÔME PARAMÉDICAL
 Si l'offre exige un diplôme paramédical ou médical comme condition obligatoire :
-diplôme d'État infirmier, DEI, IBODE, IADE, sage-femme, aide-soignant,cadre de santé,
+diplôme d'État infirmier, DEI, IBODE, IADE, sage-femme, aide-soignant, cadre de santé,
 auxiliaire de puériculture, DTS manipulateur, électroradiologie...
 → résultat = "reject", categorie = "diplome_paramedical"
 
@@ -108,7 +118,7 @@ occupé par quelqu'un issu d'une école d'ingénieur ou de commerce Bac+5 (maste
 
 → "reject" si le poste est typiquement occupé par un Bac, BTS ou DUT :
 technicien, opérateur, agent, magasinier, électricien, cuisinier...
-→ "reject" si le poste est pour un profil en droit, en enseignement ou en ressources humaines (Juriste, RH, Enseignant...)
+→ "reject" si le poste est pour un profil en droit, en enseignement ou en ressources humaines
 
 En cas de doute → "pass"
 
@@ -140,21 +150,32 @@ def run_filter_1(limit: int = None):
     for i, job in enumerate(jobs, 1):
         print(f"  [{i}/{len(jobs)}] {job['title'][:60]}...")
 
+        # ── Auto-pass métier ──────────────────────────────────────────
         if job.get("metier", "") in PASS_METIERS:
             mark_passed(job["id"], f"Passage automatique : métier qualifiant '{job.get('metier')}'")
             auto_passed += 1
             print(f"    🙈 Auto-pass métier : '{job.get('metier')}'")
             continue
 
-        # ── Pré-check mots-clés Bac+5 → passage automatique sans LLM ──
+        # ── Auto-pass mots-clés Bac+5 ────────────────────────────────
         kw_found = check_pass_keywords(job)
         if kw_found:
             mark_passed(job["id"], f"Passage automatique : mot-clé '{kw_found}' détecté")
             auto_passed += 1
-            print(f"    🙈 Auto-pass bac+5: '{kw_found}'")
+            print(f"    🙈 Auto-pass bac+5 : '{kw_found}'")
             continue
 
-        # ── Appel LLM pour les autres ────────────────────────────────
+        # ── Auto-reject mots-clés titre ───────────────────────────────
+        title_lower = job.get("title", "").lower()
+        kw_reject = next((kw for kw in REJECT_TITLE_KEYWORDS if kw in title_lower), None)
+        if kw_reject:
+            mark_rejected(job["id"], "surqualification",
+                          f"Candidat surqualifié (Bac+5) pour ce poste : '{kw_reject}' détecté dans le titre")
+            rejected += 1
+            print(f"    ❌ Auto-reject titre : '{kw_reject}'")
+            continue
+
+        # ── Appel LLM ─────────────────────────────────────────────────
         prompt = PROMPT_TEMPLATE.format(
             title=job.get("title", ""),
             metier=job.get("metier", ""),
@@ -168,12 +189,11 @@ def run_filter_1(limit: int = None):
                 response = client.chat.completions.create(
                     model="moonshotai/kimi-k2-instruct",
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=200,
-                )   
+                    max_tokens=400,
+                )
                 raw = response.choices[0].message.content.strip()
                 match = re.search(r'\{[^{}]*"resultat"[^{}]*\}', raw, re.DOTALL)
                 if not match:
-                    # Tentative plus large
                     match = re.search(r'\{.*\}', raw, re.DOTALL)
                 if not match:
                     raise ValueError(f"Pas de JSON : {raw[:80]}")
@@ -199,25 +219,22 @@ def run_filter_1(limit: int = None):
                 err = str(e)
                 print(f"    ⚠️  Erreur : {err}")
                 if "429" in err or "rate_limit" in err:
-                    # Remplace le bloc limite journalière :
-            if "per day" in err or "TPD" in err:
-                match_wait = re.search(r'try again in (.+?)\.', err)
-                wait_msg = f"Réessaie dans : {match_wait.group(1)}" if match_wait else ""
-                print(f"    🛑 Limite journalière ! {wait_msg}")
-
-                # Marquer les offres restantes comme "à trier"
-                remaining = jobs[i:]  # toutes les offres pas encore traitées
-                conn = sqlite3.connect(DB_PATH)
-                for remaining_job in remaining:
-                    conn.execute("""
-                        UPDATE jobs SET rejection_category = 'a_trier'
-                        WHERE id = ?
-                    """, (remaining_job["id"],))
-                conn.commit()
-                conn.close()
-                print(f"    💾 {len(remaining)} offres marquées 'à trier' pour la prochaine fois")
-                print(f"    💾 {passed + auto_passed} passées, {rejected} rejetées jusqu'ici")
-                return
+                    if "per day" in err or "TPD" in err:
+                        match_wait = re.search(r'try again in (.+?)\.', err)
+                        wait_msg = f"Réessaie dans : {match_wait.group(1)}" if match_wait else ""
+                        print(f"    🛑 Limite journalière ! {wait_msg}")
+                        remaining = jobs[i:]
+                        conn = sqlite3.connect(DB_PATH)
+                        for remaining_job in remaining:
+                            conn.execute("""
+                                UPDATE jobs SET rejection_category = 'a_trier'
+                                WHERE id = ?
+                            """, (remaining_job["id"],))
+                        conn.commit()
+                        conn.close()
+                        print(f"    💾 {len(remaining)} offres marquées 'à trier'")
+                        print(f"    💾 {passed + auto_passed} passées, {rejected} rejetées jusqu'ici")
+                        return
                     else:
                         print(f"    ⏳ Rate limit/minute, pause 60s...")
                         time.sleep(60)
@@ -225,15 +242,14 @@ def run_filter_1(limit: int = None):
                     break
 
         if not success:
-            # En cas d'erreur → on laisse passer par sécurité
             mark_passed(job["id"], "Erreur analyse — passage par défaut")
             errors += 1
 
     print(f"\n✅ Filtre IA étape 1 terminé :")
-    print(f"   ✅ Auto-passées (mots-clés) : {auto_passed}")
-    print(f"   ✅ Passées (LLM)            : {passed}")
-    print(f"   ❌ Rejetées                 : {rejected}")
-    print(f"   ⚠️  Erreurs (passées quand même) : {errors}")
+    print(f"   🙈 Auto-passées  : {auto_passed}")
+    print(f"   ✅ Passées (LLM) : {passed}")
+    print(f"   ❌ Rejetées      : {rejected}")
+    print(f"   ⚠️  Erreurs       : {errors}")
 
 if __name__ == "__main__":
     run_filter_1()

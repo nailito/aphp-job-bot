@@ -118,3 +118,41 @@ def get_stats() -> dict:
         removed = conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'removed'").fetchone()[0]
         scored  = conn.execute("SELECT COUNT(*) FROM jobs WHERE score IS NOT NULL").fetchone()[0]
     return {"total": total, "active": active, "removed": removed, "scored": scored}
+
+
+def save_feedback(job_id: str, decision: str, tags: list, commentaire: str):
+    now = datetime.now().isoformat()
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM feedbacks WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if existing:
+            conn.execute("""
+                UPDATE feedbacks
+                SET decision = ?, tags = ?, commentaire = ?, created_at = ?
+                WHERE job_id = ?
+            """, (decision, str(tags), commentaire, now, job_id))
+        else:
+            conn.execute("""
+                INSERT INTO feedbacks (job_id, decision, tags, commentaire, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (job_id, decision, str(tags), commentaire, now))
+        conn.commit()
+
+def get_feedbacks() -> list[dict]:
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT f.job_id, f.decision, f.tags, f.commentaire, f.created_at,
+                   j.title, j.metier, j.hopital, j.location, j.url
+            FROM feedbacks f
+            JOIN jobs j ON f.job_id = j.id
+            ORDER BY f.created_at DESC
+        """).fetchall()
+    cols = ["job_id","decision","tags","commentaire","created_at",
+            "title","metier","hopital","location","url"]
+    return [dict(zip(cols, r)) for r in rows]
+
+def delete_feedback(job_id: str):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM feedbacks WHERE job_id = ?", (job_id,))
+        conn.commit()
