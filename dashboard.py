@@ -1,10 +1,11 @@
 import streamlit as st
-import sqlite3
+import psycopg2
+import os
 import pandas as pd
 from datetime import datetime
 from config import EXCLUDED_METIERS
 
-DB_PATH = "aphp_jobs.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 st.set_page_config(page_title="Veille APHP", page_icon="🏥", layout="wide")
 
@@ -16,9 +17,12 @@ CATEGORY_LABELS = {
     "profil_inadequat":    "Profil inadéquat",
 }
 
+def get_connection():
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
+
 @st.cache_data(ttl=30)
 def load_data():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     df = pd.read_sql("""
         SELECT id, title, metier, filiere, hopital, location,
                contrat, teletravail, date_publication, url, score,
@@ -35,8 +39,8 @@ def load_data():
 
 try:
     df_all = load_data()
-except Exception:
-    st.error("Base de données introuvable. Lance `python main.py` d'abord.")
+except Exception as e:
+    st.error(f"Erreur de connexion à la base de données : {e}")
     st.stop()
 
 df_active  = df_all[df_all["status"] == "active"]
@@ -126,6 +130,107 @@ if page == "📊 Tableau de bord":
                 })
 
 # ══════════════════════════════════════════════════════════════════════════════
+elif page == "📰 Rapport du jour":
+    st.title("📰 Rapport du jour")
+
+    conn = get_connection()
+    runs = pd.read_sql("SELECT * FROM pipeline_runs ORDER BY run_date DESC LIMIT 30", conn)
+    conn.close()
+
+    if runs.empty:
+        st.info("Aucun pipeline exécuté. Lance `python pipeline.py` pour démarrer.")
+    else:
+        last     = runs.iloc[0]
+        run_date = last["run_date"][:10]
+
+        if last["n_new"] == 0:
+            st.success(f"✅ Dernier run le {run_date} — Aucune nouvelle offre")
+        else:
+            st.info(f"📅 Dernier run le {run_date} — **{last['n_new']} nouvelles offres** détectées")
+
+        st.divider()
+
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("🌐 Scrappées",  f"{last['n_scraped']:,}")
+        col2.metric("🆕 Nouvelles",  f"{last['n_new']:,}")
+        col3.metric("🗑️ Retirées",   f"{last['n_removed']:,}")
+        col4.metric("✅ Passées IA", f"{last['n_passed_ai']:,}")
+        col5.metric("🎯 Scorées",    f"{last['n_scored']:,}")
+
+        st.divider()
+
+        df_nouvelles = df_active[
+            df_active["first_seen"].dt.date == pd.Timestamp(last["run_date"][:10]).date()
+        ].copy()
+
+        if not df_nouvelles.empty:
+            tab1, tab2, tab3 = st.tabs([
+                f"✅ Passées IA ({len(df_nouvelles[df_nouvelles['rejection_category'] == 'passed_filter_1'])})",
+                f"❌ Rejetées ({len(df_nouvelles[df_nouvelles['rejection_category'].isin(['metier_exclu','diplome_paramedical','surqualification'])])})",
+                f"🎯 Scorées ({len(df_nouvelles[df_nouvelles['score'].notna()])})",
+            ])
+
+            with tab1:
+                df_p = df_nouvelles[df_nouvelles["rejection_category"] == "passed_filter_1"]
+                if df_p.empty:
+                    st.info("Aucune offre passée le filtre IA.")
+                else:
+                    df_p = df_p[["title","metier","hopital","location","contrat","score","url"]].copy()
+                    df_p.columns = ["Titre","Métier","Hôpital","Lieu","Contrat","Score","URL"]
+                    st.dataframe(df_p, use_container_width=True, hide_index=True,
+                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                                       "Titre": st.column_config.TextColumn(width="large")})
+
+            with tab2:
+                df_r = df_nouvelles[df_nouvelles["rejection_category"].isin(
+                    ["metier_exclu","diplome_paramedical","surqualification","profil_inadequat"]
+                )]
+                if df_r.empty:
+                    st.info("Aucune offre rejetée.")
+                else:
+                    df_r = df_r[["title","metier","rejection_category","rejection_reason","url"]].copy()
+                    df_r["rejection_category"] = df_r["rejection_category"].map(CATEGORY_LABELS)
+                    df_r.columns = ["Titre","Métier","Catégorie","Raison","URL"]
+                    st.dataframe(df_r, use_container_width=True, hide_index=True,
+                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                                       "Titre": st.column_config.TextColumn(width="large")})
+
+            with tab3:
+                df_s = df_nouvelles[df_nouvelles["score"].notna()].sort_values("score", ascending=False)
+                if df_s.empty:
+                    st.info("Aucune offre scorée.")
+                else:
+                    df_s = df_s[["score","priorite","title","metier","hopital","score_raison","url"]].copy()
+                    df_s.columns = ["Score","Priorité","Titre","Métier","Hôpital","Analyse","URL"]
+                    st.dataframe(df_s, use_container_width=True, hide_index=True,
+                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                                       "Titre": st.column_config.TextColumn(width="large"),
+                                       "Score": st.column_config.NumberColumn(format="%d/100")})
+
+        st.divider()
+        st.subheader("📈 Historique des runs")
+        runs_display = runs[["run_date","n_new","n_removed","n_passed_ai","n_scored","status","duration_sec"]].copy()
+        runs_display["run_date"]     = runs_display["run_date"].str[:16]
+        runs_display["duration_sec"] = runs_display["duration_sec"].apply(lambda x: f"{x}s")
+        runs_display.columns = ["Date","Nouvelles","Retirées","Passées IA","Scorées","Statut","Durée"]
+        st.dataframe(runs_display, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("🚀 Lancer le pipeline manuellement")
+    if st.button("▶️ Lancer le pipeline maintenant", use_container_width=True, type="primary"):
+        with st.spinner("Pipeline en cours... (peut prendre plusieurs minutes)"):
+            import subprocess
+            result = subprocess.run(["python", "pipeline.py"], capture_output=True, text=True)
+            if result.returncode == 0:
+                st.success("✅ Pipeline terminé !")
+                st.code(result.stdout[-2000:])
+            else:
+                st.error("❌ Erreur pipeline")
+                st.code(result.stderr[-2000:])
+        st.cache_data.clear()
+        st.rerun()
+
+# ══════════════════════════════════════════════════════════════════════════════
 elif page == "🔍 Explorer les offres":
     st.title("🔍 Explorer les offres")
 
@@ -181,7 +286,7 @@ elif page == "✅ Offres acceptées par l'IA":
         df_scorees     = df_passed[df_passed["score"].notna()].sort_values("score", ascending=False)
         df_non_scorees = df_passed[df_passed["score"].isna()]
 
-        st.caption(f"{len(df_passed)} offres acceptées — {len(df_scorees)} scorées, {len(df_non_scorees)} en attente de score")
+        st.caption(f"{len(df_passed)} offres acceptées — {len(df_scorees)} scorées, {len(df_non_scorees)} en attente")
 
         tab_scorees, tab_non_scorees = st.tabs([
             f"🎯 Scorées ({len(df_scorees)})",
@@ -209,7 +314,67 @@ elif page == "✅ Offres acceptées par l'IA":
                     "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
                     "Titre": st.column_config.TextColumn(width="large"),
                 })
-            st.info("Lance `python -c \"from scorer import run_scorer; run_scorer()\"` pour scorer ces offres.")
+            st.info("Lance `python -c \"from scorer import run_scorer; run_scorer()\"` pour scorer.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "❌ Offres refusées par score":
+    st.title("❌ Offres refusées par score IA")
+
+    df_refuses = df_active[
+        (df_active["rejection_category"] == "profil_inadequat") &
+        (df_active["score"].notna())
+    ].copy().drop_duplicates(subset="id")
+
+    if df_refuses.empty:
+        st.info("Aucune offre refusée par score pour l'instant.")
+    else:
+        df_refuses["score_num"] = pd.to_numeric(df_refuses["score"], errors="coerce")
+        df_refuses = df_refuses.sort_values("score_num", ascending=False).reset_index(drop=True)
+        st.caption(f"{len(df_refuses)} offres refusées (score < 50)")
+
+        for idx, row in df_refuses.iterrows():
+            job_key = f"{idx}_{row['id']}"
+            score   = int(row["score"]) if pd.notna(row.get("score")) else 0
+
+            with st.expander(f"🔴 {score}/100 — **{row['title']}** — {row['hopital']}"):
+                st.markdown(f"**Métier :** {row['metier']} | **Filière :** {row['filiere']}")
+                st.markdown(f"**📍 {row['location']}** | **📄 {row['contrat']}** | **🖥 {row['teletravail']}**")
+                st.link_button("Voir l'offre →", row["url"])
+
+                st.divider()
+                col_score, col_prio = st.columns(2)
+                col_score.metric("Score", f"{score}/100")
+                col_prio.metric("Priorité", row.get("priorite", "–"))
+                st.markdown(f"**Raison du refus :** {row.get('score_raison', '–')}")
+
+                if pd.notna(row.get("score_points_faibles")):
+                    try:
+                        import json
+                        pf = json.loads(row["score_points_faibles"])
+                        if pf:
+                            st.markdown("**Points faibles :**")
+                            for p in pf:
+                                st.markdown(f"- ⚠️ {p}")
+                    except Exception:
+                        pass
+
+                st.divider()
+                if st.button("🔄 Remettre en question cette évaluation", key=f"reeval_{job_key}", use_container_width=True):
+                    with get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                UPDATE jobs
+                                SET rejection_category = 'passed_filter_1',
+                                    score = NULL, priorite = NULL,
+                                    score_raison = NULL,
+                                    score_points_forts = NULL,
+                                    score_points_faibles = NULL
+                                WHERE id = %s
+                            """, (row["id"],))
+                        conn.commit()
+                    st.success("✅ Offre remise dans la liste à évaluer !")
+                    st.cache_data.clear()
+                    st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📝 À évaluer":
@@ -262,10 +427,8 @@ elif page == "📝 À évaluer":
 
                     date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                     st.markdown(f"**📅 Publiée le :** {date_pub}")
-
                     st.link_button("Voir l'offre →", row["url"])
 
-                    # Résumé IA
                     if st.button("✨ Générer résumé", key=f"resume_{job_key}"):
                         with st.spinner("Génération en cours..."):
                             try:
@@ -385,182 +548,3 @@ elif page == "⚙️  Config":
     fil = df_active["filiere"].value_counts().reset_index()
     fil.columns = ["Filière","Offres"]
     st.dataframe(fil, use_container_width=True, hide_index=True)
-
-
-elif page == "❌ Offres refusées par score":
-    st.title("❌ Offres refusées par score IA")
-
-    df_refuses = df_active[
-        (df_active["rejection_category"] == "profil_inadequat") &
-        (df_active["score"].notna())
-    ].copy().drop_duplicates(subset="id")
-
-    if df_refuses.empty:
-        st.info("Aucune offre refusée par score pour l'instant.")
-    else:
-        df_refuses["score_num"] = pd.to_numeric(df_refuses["score"], errors="coerce")
-        df_refuses = df_refuses.sort_values("score_num", ascending=False).reset_index(drop=True)
-
-        st.caption(f"{len(df_refuses)} offres refusées (score < 50)")
-
-        for idx, row in df_refuses.iterrows():
-            job_key = f"{idx}_{row['id']}"
-            score   = int(row["score"]) if pd.notna(row.get("score")) else 0
-
-            with st.expander(f"🔴 {score}/100 — **{row['title']}** — {row['hopital']}"):
-                st.markdown(f"**Métier :** {row['metier']} | **Filière :** {row['filiere']}")
-                st.markdown(f"**📍 {row['location']}** | **📄 {row['contrat']}** | **🖥 {row['teletravail']}**")
-                st.link_button("Voir l'offre →", row["url"])
-
-                st.divider()
-                col_score, col_prio = st.columns(2)
-                col_score.metric("Score", f"{score}/100")
-                col_prio.metric("Priorité", row.get("priorite", "–"))
-                st.markdown(f"**Raison du refus :** {row.get('score_raison', '–')}")
-
-                # Points faibles
-                if pd.notna(row.get("score_points_faibles")):
-                    try:
-                        import json
-                        pf = json.loads(row["score_points_faibles"])
-                        if pf:
-                            st.markdown("**Points faibles :**")
-                            for p in pf:
-                                st.markdown(f"- ⚠️ {p}")
-                    except Exception:
-                        pass
-
-                st.divider()
-
-                # Bouton remettre en question
-                if st.button("🔄 Remettre en question cette évaluation", key=f"reeval_{job_key}", use_container_width=True):
-                    conn = sqlite3.connect(DB_PATH)
-                    conn.execute("""
-                        UPDATE jobs
-                        SET rejection_category = 'passed_filter_1',
-                            score = NULL,
-                            priorite = NULL,
-                            score_raison = NULL,
-                            score_points_forts = NULL,
-                            score_points_faibles = NULL
-                        WHERE id = ?
-                    """, (row["id"],))
-                    conn.commit()
-                    conn.close()
-                    st.success("✅ Offre remise dans la liste à évaluer !")
-                    st.cache_data.clear()
-                    st.rerun()
-
-
-elif page == "📰 Rapport du jour":
-    st.title("📰 Rapport du jour")
-
-    # Charger l'historique des runs
-    conn = sqlite3.connect(DB_PATH)
-    runs = pd.read_sql("SELECT * FROM pipeline_runs ORDER BY run_date DESC LIMIT 30", conn)
-    conn.close()
-
-    if runs.empty:
-        st.info("Aucun pipeline exécuté. Lance `python pipeline.py` pour démarrer.")
-    else:
-        last = runs.iloc[0]
-        run_date = last["run_date"][:10]
-
-        # Bandeau principal
-        if last["n_new"] == 0:
-            st.success(f"✅ Dernier run le {run_date} — Aucune nouvelle offre")
-        else:
-            st.info(f"📅 Dernier run le {run_date} — **{last['n_new']} nouvelles offres** détectées")
-
-        st.divider()
-
-        # KPIs du dernier run
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("🌐 Scrappées",    f"{last['n_scraped']:,}")
-        col2.metric("🆕 Nouvelles",    f"{last['n_new']:,}")
-        col3.metric("🗑️ Retirées",     f"{last['n_removed']:,}")
-        col4.metric("✅ Passées IA",   f"{last['n_passed_ai']:,}")
-        col5.metric("🎯 Scorées",      f"{last['n_scored']:,}")
-
-        st.divider()
-
-        # Nouvelles offres du dernier run
-        today = pd.Timestamp(last["run_date"][:10])
-        df_nouvelles = df_active[
-            df_active["first_seen"].dt.date == pd.Timestamp(last["run_date"][:10]).date()
-        ].copy()
-
-        if not df_nouvelles.empty:
-            tab1, tab2, tab3 = st.tabs([
-                f"✅ Passées IA ({len(df_nouvelles[df_nouvelles['rejection_category'] == 'passed_filter_1'])})",
-                f"❌ Rejetées ({len(df_nouvelles[df_nouvelles['rejection_category'].isin(['metier_exclu','diplome_paramedical','surqualification'])])})",
-                f"🎯 Scorées ({len(df_nouvelles[df_nouvelles['score'].notna()])})",
-            ])
-
-            with tab1:
-                df_p = df_nouvelles[df_nouvelles["rejection_category"] == "passed_filter_1"]
-                if df_p.empty:
-                    st.info("Aucune offre passée le filtre IA.")
-                else:
-                    df_p = df_p[["title","metier","hopital","location","contrat","score","url"]].copy()
-                    df_p.columns = ["Titre","Métier","Hôpital","Lieu","Contrat","Score","URL"]
-                    st.dataframe(df_p, use_container_width=True, hide_index=True,
-                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                                       "Titre": st.column_config.TextColumn(width="large")})
-
-            with tab2:
-                df_r = df_nouvelles[df_nouvelles["rejection_category"].isin(
-                    ["metier_exclu","diplome_paramedical","surqualification","profil_inadequat"]
-                )]
-                if df_r.empty:
-                    st.info("Aucune offre rejetée.")
-                else:
-                    df_r = df_r[["title","metier","rejection_category","rejection_reason","url"]].copy()
-                    df_r["rejection_category"] = df_r["rejection_category"].map(CATEGORY_LABELS)
-                    df_r.columns = ["Titre","Métier","Catégorie","Raison","URL"]
-                    st.dataframe(df_r, use_container_width=True, hide_index=True,
-                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                                       "Titre": st.column_config.TextColumn(width="large")})
-
-            with tab3:
-                df_s = df_nouvelles[df_nouvelles["score"].notna()].sort_values("score", ascending=False)
-                if df_s.empty:
-                    st.info("Aucune offre scorée.")
-                else:
-                    df_s = df_s[["score","priorite","title","metier","hopital","score_raison","url"]].copy()
-                    df_s.columns = ["Score","Priorité","Titre","Métier","Hôpital","Analyse","URL"]
-                    st.dataframe(df_s, use_container_width=True, hide_index=True,
-                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                                       "Titre": st.column_config.TextColumn(width="large"),
-                                       "Score": st.column_config.NumberColumn(format="%d/100")})
-
-        st.divider()
-
-        # Historique des runs
-        st.subheader("📈 Historique des runs")
-        runs_display = runs[["run_date","n_new","n_removed","n_passed_ai","n_scored","status","duration_sec"]].copy()
-        runs_display["run_date"] = runs_display["run_date"].str[:16]
-        runs_display["duration_sec"] = runs_display["duration_sec"].apply(lambda x: f"{x}s")
-        runs_display.columns = ["Date","Nouvelles","Retirées","Passées IA","Scorées","Statut","Durée"]
-        st.dataframe(runs_display, use_container_width=True, hide_index=True)
-
-    st.divider()
-
-    # Bouton déclenchement manuel
-    st.subheader("🚀 Lancer le pipeline manuellement")
-    st.caption("Lance le scraping + filtres + scoring en une seule commande")
-    if st.button("▶️ Lancer le pipeline maintenant", use_container_width=True, type="primary"):
-        with st.spinner("Pipeline en cours... (peut prendre plusieurs minutes)"):
-            import subprocess
-            result = subprocess.run(
-                ["python", "pipeline.py"],
-                capture_output=True, text=True
-            )
-            if result.returncode == 0:
-                st.success("✅ Pipeline terminé !")
-                st.code(result.stdout[-2000:])
-            else:
-                st.error("❌ Erreur pipeline")
-                st.code(result.stderr[-2000:])
-        st.cache_data.clear()
-        st.rerun()

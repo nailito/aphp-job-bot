@@ -1,26 +1,33 @@
 import time
-import sqlite3
+import os
+import psycopg2
 from datetime import datetime
 
-DB_PATH = "aphp_jobs.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 def save_run(n_scraped, n_new, n_removed, n_passed_ai, n_rejected_ai, n_scored, status, duration):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
-        INSERT INTO pipeline_runs
-        (run_date, n_scraped, n_new, n_removed, n_passed_ai, n_rejected_ai, n_scored, status, duration_sec)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (datetime.now().isoformat(), n_scraped, n_new, n_removed,
-          n_passed_ai, n_rejected_ai, n_scored, status, duration))
-    conn.commit()
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO pipeline_runs
+                (run_date, n_scraped, n_new, n_removed, n_passed_ai, n_rejected_ai, n_scored, status, duration_sec)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (datetime.now().isoformat(), n_scraped, n_new, n_removed,
+                  n_passed_ai, n_rejected_ai, n_scored, status, duration))
+        conn.commit()
 
 def get_counts():
-    conn = sqlite3.connect(DB_PATH)
-    passed_ai  = conn.execute("SELECT COUNT(*) FROM jobs WHERE rejection_category = 'passed_filter_1' AND status = 'active'").fetchone()[0]
-    rej_ai     = conn.execute("SELECT COUNT(*) FROM jobs WHERE rejection_category IN ('diplome_paramedical','surqualification','profil_inadequat') AND status = 'active'").fetchone()[0]
-    scored     = conn.execute("SELECT COUNT(*) FROM jobs WHERE score IS NOT NULL AND status = 'active'").fetchone()[0]
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE rejection_category = 'passed_filter_1' AND status = 'active'")
+            passed_ai = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE rejection_category IN ('diplome_paramedical','surqualification','profil_inadequat') AND status = 'active'")
+            rej_ai = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE score IS NOT NULL AND status = 'active'")
+            scored = cur.fetchone()[0]
     return passed_ai, rej_ai, scored
 
 def run_pipeline():
@@ -41,9 +48,9 @@ def run_pipeline():
         init_db()
         jobs = scrape_jobs(APHP_JOBS_URL, max_pages=115)
         diff = upsert_jobs(jobs)
-        n_scraped  = len(jobs)
-        n_new      = len(diff["new"])
-        n_removed  = len(diff["removed"])
+        n_scraped = len(jobs)
+        n_new     = len(diff["new"])
+        n_removed = len(diff["removed"])
         print(f"   ✅ {n_scraped} offres scrappées — {n_new} nouvelles — {n_removed} retirées")
 
         if n_new == 0:
@@ -53,28 +60,28 @@ def run_pipeline():
 
         # ── Étape 2 : Filtre métier/contrat ─────────────────────────
         print("\n🚫 Étape 2 — Filtre métier/contrat...")
-        from main import load_active_jobs, mark_rejected, reset_rejections
+        from main   import mark_rejected
         from config import EXCLUDED_METIERS
-        import sqlite3 as _sq
 
         EXCLUDED_CONTRATS = ["Stage", "CAE"]
         EXCLUDED_FILIERES = ["Rééducation", "Paramédical encadrement"]
 
-        # Appliquer uniquement sur les nouvelles offres
         new_ids = {j["id"] for j in diff["new"]}
-        conn = _sq.connect(DB_PATH)
-        new_jobs = conn.execute("""
-            SELECT id, title, metier, filiere, hopital, location,
-                   contrat, teletravail, horaire, temps_travail,
-                   date_publication, description, url
-            FROM jobs WHERE id IN ({})
-        """.format(",".join("?" * len(new_ids))), list(new_ids)).fetchall()
-        conn.close()
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                placeholders = ",".join(["%s"] * len(new_ids))
+                cur.execute(f"""
+                    SELECT id, title, metier, filiere, hopital, location,
+                           contrat, teletravail, horaire, temps_travail,
+                           date_publication, description, url
+                    FROM jobs WHERE id IN ({placeholders})
+                """, list(new_ids))
+                rows = cur.fetchall()
 
         cols = ["id","title","metier","filiere","hopital","location",
                 "contrat","teletravail","horaire","temps_travail",
                 "date_publication","description","url"]
-        new_jobs = [dict(zip(cols, r)) for r in new_jobs]
+        new_jobs = [dict(zip(cols, r)) for r in rows]
 
         n_rej_metier = 0
         for job in new_jobs:
@@ -102,7 +109,6 @@ def run_pipeline():
 
         passed_ai, rej_ai, scored = get_counts()
         duration = int(time.time() - start)
-
         save_run(n_scraped, n_new, n_removed, passed_ai, rej_ai, scored, "success", duration)
 
         print(f"\n{'=' * 60}")

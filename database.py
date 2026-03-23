@@ -1,158 +1,183 @@
-import sqlite3
+import os
+import json
+import psycopg2
+import psycopg2.extras
 from datetime import datetime
 
-DB_PATH = "aphp_jobs.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 def get_connection():
-    return sqlite3.connect(DB_PATH)
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 def init_db():
     with get_connection() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                id                TEXT PRIMARY KEY,
-                title             TEXT,
-                metier            TEXT,
-                filiere           TEXT,
-                hopital           TEXT,
-                location          TEXT,
-                contrat           TEXT,
-                teletravail       TEXT,
-                horaire           TEXT,
-                temps_travail     TEXT,
-                date_publication  TEXT,
-                description       TEXT,
-                url               TEXT,
-                score             INTEGER DEFAULT NULL,
-                mots_cles_matches TEXT DEFAULT NULL,
-                raison            TEXT DEFAULT NULL,
-                first_seen        TEXT,
-                last_seen         TEXT,
-                status            TEXT DEFAULT 'active'
-            )
-        """)
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS jobs (
+                    id                TEXT PRIMARY KEY,
+                    title             TEXT,
+                    metier            TEXT,
+                    filiere           TEXT,
+                    hopital           TEXT,
+                    location          TEXT,
+                    contrat           TEXT,
+                    teletravail       TEXT,
+                    horaire           TEXT,
+                    temps_travail     TEXT,
+                    date_publication  TEXT,
+                    description       TEXT,
+                    url               TEXT,
+                    score             INTEGER DEFAULT NULL,
+                    priorite          TEXT DEFAULT NULL,
+                    score_raison      TEXT DEFAULT NULL,
+                    score_points_forts TEXT DEFAULT NULL,
+                    score_points_faibles TEXT DEFAULT NULL,
+                    mots_cles_matches TEXT DEFAULT NULL,
+                    raison            TEXT DEFAULT NULL,
+                    rejection_category TEXT DEFAULT NULL,
+                    rejection_reason  TEXT DEFAULT NULL,
+                    first_seen        TEXT,
+                    last_seen         TEXT,
+                    status            TEXT DEFAULT 'active'
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS feedbacks (
+                    id          SERIAL PRIMARY KEY,
+                    job_id      TEXT NOT NULL,
+                    decision    TEXT NOT NULL,
+                    tags        TEXT,
+                    commentaire TEXT,
+                    created_at  TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pipeline_runs (
+                    id            SERIAL PRIMARY KEY,
+                    run_date      TEXT,
+                    n_scraped     INTEGER,
+                    n_new         INTEGER,
+                    n_removed     INTEGER,
+                    n_passed_ai   INTEGER,
+                    n_rejected_ai INTEGER,
+                    n_scored      INTEGER,
+                    status        TEXT,
+                    duration_sec  INTEGER
+                )
+            """)
         conn.commit()
-    print("✅ Base de données initialisée")
+    print("✅ Base de données Supabase initialisée")
 
 def upsert_jobs(jobs: list[dict]) -> dict:
     now = datetime.now().isoformat()
-
     with get_connection() as conn:
-        site_ids     = {j["id"] for j in jobs}
-        existing_ids = {row[0] for row in conn.execute("SELECT id FROM jobs WHERE status = 'active'")}
-        new_ids      = site_ids - existing_ids
-        removed_ids  = existing_ids - site_ids
-        new_jobs     = [j for j in jobs if j["id"] in new_ids]
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM jobs WHERE status = 'active'")
+            existing_ids = {row[0] for row in cur.fetchall()}
 
-        for job in new_jobs:
-            conn.execute("""
-                INSERT OR IGNORE INTO jobs (
-                    id, title, metier, filiere, hopital, location,
-                    contrat, teletravail, horaire, temps_travail,
-                    date_publication, description, url,
-                    first_seen, last_seen, status
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?, ?,
-                    ?, ?, 'active'
+            site_ids    = {j["id"] for j in jobs}
+            new_ids     = site_ids - existing_ids
+            removed_ids = existing_ids - site_ids
+            new_jobs    = [j for j in jobs if j["id"] in new_ids]
+
+            for job in new_jobs:
+                cur.execute("""
+                    INSERT INTO jobs (
+                        id, title, metier, filiere, hopital, location,
+                        contrat, teletravail, horaire, temps_travail,
+                        date_publication, description, url,
+                        first_seen, last_seen, status
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'active')
+                    ON CONFLICT (id) DO NOTHING
+                """, (
+                    job.get("id",""), job.get("title",""), job.get("metier",""),
+                    job.get("filiere",""), job.get("hopital",""), job.get("location",""),
+                    job.get("contrat",""), job.get("teletravail",""), job.get("horaire",""),
+                    job.get("temps_travail",""), job.get("date_publication",""),
+                    job.get("description",""), job.get("url",""), now, now
+                ))
+
+            for job in jobs:
+                if job["id"] in existing_ids:
+                    cur.execute(
+                        "UPDATE jobs SET last_seen = %s WHERE id = %s",
+                        (now, job["id"])
+                    )
+
+            for job_id in removed_ids:
+                cur.execute(
+                    "UPDATE jobs SET status = 'removed' WHERE id = %s",
+                    (job_id,)
                 )
-            """, (
-                job.get("id", ""),
-                job.get("title", ""),
-                job.get("metier", ""),
-                job.get("filiere", ""),
-                job.get("hopital", ""),
-                job.get("location", ""),
-                job.get("contrat", ""),
-                job.get("teletravail", ""),
-                job.get("horaire", ""),
-                job.get("temps_travail", ""),
-                job.get("date_publication", ""),
-                job.get("description", ""),
-                job.get("url", ""),
-                now,
-                now,
-            ))
-
-        for job in jobs:
-            if job["id"] in existing_ids:
-                conn.execute(
-                    "UPDATE jobs SET last_seen = ? WHERE id = ?",
-                    (now, job["id"])
-                )
-
-        for job_id in removed_ids:
-            conn.execute(
-                "UPDATE jobs SET status = 'removed' WHERE id = ?",
-                (job_id,)
-            )
 
         conn.commit()
 
     print(f"  🆕 {len(new_jobs)} nouvelles offres")
     print(f"  🗑️  {len(removed_ids)} offres retirées")
-    print(f"  ♻️  {len(existing_ids & site_ids)} offres déjà connues (ignorées)")
-
+    print(f"  ♻️  {len(existing_ids & site_ids)} offres déjà connues")
     return {"new": new_jobs, "removed": list(removed_ids)}
 
 def save_scores(jobs: list[dict]):
     with get_connection() as conn:
-        for job in jobs:
-            conn.execute("""
-                UPDATE jobs SET score = ?, mots_cles_matches = ?, raison = ?
-                WHERE id = ?
-            """, (
-                job.get("score"),
-                job.get("mots_cles_matches", ""),
-                job.get("raison", ""),
-                job["id"]
-            ))
+        with conn.cursor() as cur:
+            for job in jobs:
+                cur.execute("""
+                    UPDATE jobs SET score=%s, mots_cles_matches=%s, raison=%s
+                    WHERE id=%s
+                """, (job.get("score"), job.get("mots_cles_matches",""),
+                      job.get("raison",""), job["id"]))
         conn.commit()
     print(f"✅ Scores sauvegardés pour {len(jobs)} offres")
 
 def get_stats() -> dict:
     with get_connection() as conn:
-        total   = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        active  = conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'active'").fetchone()[0]
-        removed = conn.execute("SELECT COUNT(*) FROM jobs WHERE status = 'removed'").fetchone()[0]
-        scored  = conn.execute("SELECT COUNT(*) FROM jobs WHERE score IS NOT NULL").fetchone()[0]
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM jobs")
+            total = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE status = 'active'")
+            active = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE status = 'removed'")
+            removed = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE score IS NOT NULL")
+            scored = cur.fetchone()[0]
     return {"total": total, "active": active, "removed": removed, "scored": scored}
-
 
 def save_feedback(job_id: str, decision: str, tags: list, commentaire: str):
     now = datetime.now().isoformat()
     with get_connection() as conn:
-        existing = conn.execute(
-            "SELECT id FROM feedbacks WHERE job_id = ?", (job_id,)
-        ).fetchone()
-        if existing:
-            conn.execute("""
-                UPDATE feedbacks
-                SET decision = ?, tags = ?, commentaire = ?, created_at = ?
-                WHERE job_id = ?
-            """, (decision, str(tags), commentaire, now, job_id))
-        else:
-            conn.execute("""
-                INSERT INTO feedbacks (job_id, decision, tags, commentaire, created_at)
-                VALUES (?, ?, ?, ?, ?)
-            """, (job_id, decision, str(tags), commentaire, now))
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM feedbacks WHERE job_id = %s", (job_id,))
+            existing = cur.fetchone()
+            if existing:
+                cur.execute("""
+                    UPDATE feedbacks
+                    SET decision=%s, tags=%s, commentaire=%s, created_at=%s
+                    WHERE job_id=%s
+                """, (decision, str(tags), commentaire, now, job_id))
+            else:
+                cur.execute("""
+                    INSERT INTO feedbacks (job_id, decision, tags, commentaire, created_at)
+                    VALUES (%s,%s,%s,%s,%s)
+                """, (job_id, decision, str(tags), commentaire, now))
         conn.commit()
 
 def get_feedbacks() -> list[dict]:
     with get_connection() as conn:
-        rows = conn.execute("""
-            SELECT f.job_id, f.decision, f.tags, f.commentaire, f.created_at,
-                   j.title, j.metier, j.hopital, j.location, j.url
-            FROM feedbacks f
-            JOIN jobs j ON f.job_id = j.id
-            ORDER BY f.created_at DESC
-        """).fetchall()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT f.job_id, f.decision, f.tags, f.commentaire, f.created_at,
+                       j.title, j.metier, j.hopital, j.location, j.url
+                FROM feedbacks f
+                JOIN jobs j ON f.job_id = j.id
+                ORDER BY f.created_at DESC
+            """)
+            rows = cur.fetchall()
     cols = ["job_id","decision","tags","commentaire","created_at",
             "title","metier","hopital","location","url"]
     return [dict(zip(cols, r)) for r in rows]
 
 def delete_feedback(job_id: str):
     with get_connection() as conn:
-        conn.execute("DELETE FROM feedbacks WHERE job_id = ?", (job_id,))
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM feedbacks WHERE job_id = %s", (job_id,))
         conn.commit()

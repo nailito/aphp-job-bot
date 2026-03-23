@@ -1,11 +1,12 @@
 import json
 import re
 import time
+import os
+import psycopg2
 from groq import Groq
 from config import GROQ_API_KEY
-import sqlite3
 
-DB_PATH = "aphp_jobs.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 PASS_KEYWORDS = [
     "bac+5", "bac + 5", "diplôme d'ingénieur", "diplome d'ingenieur",
@@ -37,31 +38,39 @@ REJECT_TITLE_KEYWORDS = [
     "enseignant en activités physiques",
 ]
 
+def get_connection():
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
+
 def load_unfiltered_jobs() -> list[dict]:
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("""
-        SELECT id, title, metier, filiere, description
-        FROM jobs
-        WHERE status = 'active'
-        AND (rejection_category IS NULL OR rejection_category = 'a_trier')
-    """).fetchall()
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title, metier, filiere, description
+                FROM jobs
+                WHERE status = 'active'
+                AND (rejection_category IS NULL OR rejection_category = 'a_trier')
+            """)
+            rows = cur.fetchall()
     cols = ["id", "title", "metier", "filiere", "description"]
     return [dict(zip(cols, r)) for r in rows]
 
 def mark_rejected(job_id: str, category: str, reason: str):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("UPDATE jobs SET rejection_category = ?, rejection_reason = ? WHERE id = ?",
-                 (category, reason, job_id))
-    conn.commit()
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE jobs SET rejection_category = %s, rejection_reason = %s
+                WHERE id = %s
+            """, (category, reason, job_id))
+        conn.commit()
 
 def mark_passed(job_id: str, reason: str = "Passe le filtre IA étape 1"):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("UPDATE jobs SET rejection_category = 'passed_filter_1', rejection_reason = ? WHERE id = ?",
-                 (reason, job_id))
-    conn.commit()
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE jobs SET rejection_category = 'passed_filter_1', rejection_reason = %s
+                WHERE id = %s
+            """, (reason, job_id))
+        conn.commit()
 
 def check_pass_keywords(job: dict) -> str | None:
     text = (job.get("title", "") + " " + job.get("description", "")).lower()
@@ -150,14 +159,12 @@ def run_filter_1(limit: int = None):
     for i, job in enumerate(jobs, 1):
         print(f"  [{i}/{len(jobs)}] {job['title'][:60]}...")
 
-        # ── Auto-pass métier ──────────────────────────────────────────
         if job.get("metier", "") in PASS_METIERS:
             mark_passed(job["id"], f"Passage automatique : métier qualifiant '{job.get('metier')}'")
             auto_passed += 1
             print(f"    🙈 Auto-pass métier : '{job.get('metier')}'")
             continue
 
-        # ── Auto-pass mots-clés Bac+5 ────────────────────────────────
         kw_found = check_pass_keywords(job)
         if kw_found:
             mark_passed(job["id"], f"Passage automatique : mot-clé '{kw_found}' détecté")
@@ -165,7 +172,6 @@ def run_filter_1(limit: int = None):
             print(f"    🙈 Auto-pass bac+5 : '{kw_found}'")
             continue
 
-        # ── Auto-reject mots-clés titre ───────────────────────────────
         title_lower = job.get("title", "").lower()
         kw_reject = next((kw for kw in REJECT_TITLE_KEYWORDS if kw in title_lower), None)
         if kw_reject:
@@ -175,7 +181,6 @@ def run_filter_1(limit: int = None):
             print(f"    ❌ Auto-reject titre : '{kw_reject}'")
             continue
 
-        # ── Appel LLM ─────────────────────────────────────────────────
         prompt = PROMPT_TEMPLATE.format(
             title=job.get("title", ""),
             metier=job.get("metier", ""),
@@ -224,14 +229,14 @@ def run_filter_1(limit: int = None):
                         wait_msg = f"Réessaie dans : {match_wait.group(1)}" if match_wait else ""
                         print(f"    🛑 Limite journalière ! {wait_msg}")
                         remaining = jobs[i:]
-                        conn = sqlite3.connect(DB_PATH)
-                        for remaining_job in remaining:
-                            conn.execute("""
-                                UPDATE jobs SET rejection_category = 'a_trier'
-                                WHERE id = ?
-                            """, (remaining_job["id"],))
-                        conn.commit()
-                        conn.close()
+                        with get_connection() as conn:
+                            with conn.cursor() as cur:
+                                for remaining_job in remaining:
+                                    cur.execute("""
+                                        UPDATE jobs SET rejection_category = 'a_trier'
+                                        WHERE id = %s
+                                    """, (remaining_job["id"],))
+                            conn.commit()
                         print(f"    💾 {len(remaining)} offres marquées 'à trier'")
                         print(f"    💾 {passed + auto_passed} passées, {rejected} rejetées jusqu'ici")
                         return

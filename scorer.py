@@ -1,46 +1,49 @@
 import json
 import re
 import time
+import os
+import psycopg2
 from groq import Groq
 from config import GROQ_API_KEY, PROFILE_FACTUEL, PROFILE_MOTIVATIONNEL
-import sqlite3
 
-DB_PATH = "aphp_jobs.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 def load_jobs_to_score() -> list[dict]:
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("""
-        SELECT id, title, metier, filiere, hopital, location,
-               contrat, teletravail, description
-        FROM jobs
-        WHERE status = 'active'
-        AND rejection_category = 'passed_filter_1'
-        AND score IS NULL
-    """).fetchall()
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title, metier, filiere, hopital, location,
+                       contrat, teletravail, description
+                FROM jobs
+                WHERE status = 'active'
+                AND rejection_category = 'passed_filter_1'
+                AND score IS NULL
+            """)
+            rows = cur.fetchall()
     cols = ["id","title","metier","filiere","hopital","location",
             "contrat","teletravail","description"]
     return [dict(zip(cols, r)) for r in rows]
 
 def load_feedbacks() -> list[dict]:
-    """Charge les feedbacks pour enrichir le prompt."""
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("""
-        SELECT f.decision, f.commentaire, j.title, j.metier, j.filiere
-        FROM feedbacks f
-        JOIN jobs j ON f.job_id = j.id
-        ORDER BY f.created_at DESC
-        LIMIT 20
-    """).fetchall()
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT f.decision, f.commentaire, j.title, j.metier, j.filiere
+                FROM feedbacks f
+                JOIN jobs j ON f.job_id = j.id
+                ORDER BY f.created_at DESC
+                LIMIT 20
+            """)
+            rows = cur.fetchall()
     return [{"decision": r[0], "commentaire": r[1],
              "title": r[2], "metier": r[3], "filiere": r[4]} for r in rows]
 
 def build_feedback_examples(feedbacks: list[dict]) -> str:
-    """Formate les feedbacks comme exemples few-shot."""
     if not feedbacks:
         return "Aucun feedback disponible pour l'instant."
-
     lines = []
     for f in feedbacks:
         decision_label = {
@@ -48,30 +51,31 @@ def build_feedback_examples(feedbacks: list[dict]) -> str:
             "👍": "INTÉRESSANT",
             "👎": "PAS INTÉRESSANT"
         }.get(f["decision"], f["decision"])
-
         line = f"- {decision_label} : '{f['title']}' ({f['metier']})"
         if f["commentaire"]:
             line += f" → \"{f['commentaire']}\""
         lines.append(line)
-
     return "\n".join(lines)
 
 def save_score(job_id: str, score: int, priorite: str,
                raison: str, points_forts: list, points_faibles: list):
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
-        UPDATE jobs
-        SET score = ?, priorite = ?, score_raison = ?,
-            score_points_forts = ?, score_points_faibles = ?
-        WHERE id = ?
-    """, (
-        score, priorite, raison,
-        json.dumps(points_forts, ensure_ascii=False),
-        json.dumps(points_faibles, ensure_ascii=False),
-        job_id
-    ))
-    conn.commit()
-    conn.close()
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE jobs
+                SET score=%s, priorite=%s, score_raison=%s,
+                    score_points_forts=%s, score_points_faibles=%s
+                WHERE id=%s
+            """, (score, priorite, raison,
+                  json.dumps(points_forts, ensure_ascii=False),
+                  json.dumps(points_faibles, ensure_ascii=False),
+                  job_id))
+            if score < 50:
+                cur.execute("""
+                    UPDATE jobs SET rejection_category = 'profil_inadequat',
+                    rejection_reason = %s WHERE id = %s
+                """, (f"Score trop bas ({score}/100) : {raison}", job_id))
+        conn.commit()
 
 PROMPT_TEMPLATE = """
 Tu es un recruteur senior à l'AP-HP. Tu reçois le CV d'un candidat et une offre d'emploi.
@@ -116,7 +120,7 @@ En tant que recruteur, évalue :
    - Potentiel d'évolution ?
 
 3. **Score et priorité**
-   - P1 (score ≥ 80) : excellent match des deux côtés, peu de friction
+   - P1 (score >= 80) : excellent match des deux côtés, peu de friction
    - P2 (score 60-79) : bon potentiel mais points à vérifier en entretien
    - P3 (score 40-59) : match partiel, risque réel de rejet ou de déception
    - En dessous de 40 : ne pas recommander
@@ -147,7 +151,7 @@ def run_scorer(limit: int = None):
     if feedbacks:
         print(f"   📚 {len(feedbacks)} feedbacks injectés dans le prompt")
     else:
-        print(f"   📚 Aucun feedback encore — le scoring sera basé sur le profil seul")
+        print(f"   📚 Aucun feedback encore")
 
     scored = errors = 0
 
@@ -194,23 +198,8 @@ def run_scorer(limit: int = None):
                 save_score(job["id"], score, priorite, raison, pf, pp)
                 scored += 1
                 print(f"    🎯 {priorite} — {score}/100 : {raison[:80]}")
-
-                save_score(job["id"], score, priorite, raison, pf, pp)
-                scored += 1
-                print(f"    🎯 {priorite} - {score}/100 : {raison[:80]}")
-
-                # Rejeter automatiquement les offres avec score < 50
                 if score < 50:
-                    conn = sqlite3.connect(DB_PATH)
-                    conn.execute("""
-                        UPDATE jobs SET rejection_category = 'profil_inadequat',
-                        rejection_reason = ?
-                        WHERE id = ?
-                    """, (f"Score trop bas ({score}/100) : {raison}", job["id"]))
-                    conn.commit()
-                    conn.close()
                     print(f"    ❌ Rejeté automatiquement (score < 50)")
-
 
                 success = True
                 break
