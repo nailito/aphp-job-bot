@@ -79,4 +79,42 @@ def run_pipeline():
         n_rej_metier = 0
         for job in new_jobs:
             if job.get("metier","") in EXCLUDED_METIERS:
-                mark_rejected(job["id"], "metier_exclu",
+                mark_rejected(job["id"], "metier_exclu", f"Métier exclu : {job.get('metier','')}")
+                n_rej_metier += 1
+            elif job.get("contrat","") in EXCLUDED_CONTRATS:
+                mark_rejected(job["id"], "metier_exclu", f"Contrat exclu : {job.get('contrat','')}")
+                n_rej_metier += 1
+            elif job.get("filiere","") in EXCLUDED_FILIERES:
+                mark_rejected(job["id"], "metier_exclu", f"Filière exclue : {job.get('filiere','')}")
+                n_rej_metier += 1
+
+        print(f"   ✅ {n_rej_metier} rejetées — {len(new_jobs) - n_rej_metier} restantes")
+
+        # ── Étape 3 : Filtre IA ─────────────────────────────────────
+        print("\n🤖 Étape 3 — Filtre IA...")
+        from filter_ai import run_filter_1
+        run_filter_1()
+
+        # ── Étape 4 : Scoring ───────────────────────────────────────
+        print("\n🎯 Étape 4 — Scoring profil...")
+        from scorer import run_scorer
+        run_scorer()
+
+        passed_ai, rej_ai, scored = get_counts()
+        duration = int(time.time() - start)
+
+        save_run(n_scraped, n_new, n_removed, passed_ai, rej_ai, scored, "success", duration)
+
+        print(f"\n{'=' * 60}")
+        print(f"  ✅  Pipeline terminé en {duration}s")
+        print(f"  📊  {n_new} nouvelles | {passed_ai} passées IA | {scored} scorées")
+        print(f"{'=' * 60}")
+
+    except Exception as e:
+        duration = int(time.time() - start)
+        save_run(n_scraped, n_new, n_removed, 0, 0, 0, f"error: {e}", duration)
+        print(f"\n❌ Erreur pipeline : {e}")
+        raise
+
+if __name__ == "__main__":
+    run_pipeline()

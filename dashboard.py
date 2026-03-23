@@ -57,6 +57,7 @@ st.sidebar.title("🏥 Veille APHP")
 st.sidebar.caption(f"Sync : {str(df_all['last_seen'].max())[:16]}")
 page = st.sidebar.radio("Navigation", [
     "📊 Tableau de bord",
+    "📰 Rapport du jour",
     "🔍 Explorer les offres",
     "✅ Offres acceptées par l'IA",
     "❌ Offres refusées par score",
@@ -449,3 +450,117 @@ elif page == "❌ Offres refusées par score":
                     st.success("✅ Offre remise dans la liste à évaluer !")
                     st.cache_data.clear()
                     st.rerun()
+
+
+elif page == "📰 Rapport du jour":
+    st.title("📰 Rapport du jour")
+
+    # Charger l'historique des runs
+    conn = sqlite3.connect(DB_PATH)
+    runs = pd.read_sql("SELECT * FROM pipeline_runs ORDER BY run_date DESC LIMIT 30", conn)
+    conn.close()
+
+    if runs.empty:
+        st.info("Aucun pipeline exécuté. Lance `python pipeline.py` pour démarrer.")
+    else:
+        last = runs.iloc[0]
+        run_date = last["run_date"][:10]
+
+        # Bandeau principal
+        if last["n_new"] == 0:
+            st.success(f"✅ Dernier run le {run_date} — Aucune nouvelle offre")
+        else:
+            st.info(f"📅 Dernier run le {run_date} — **{last['n_new']} nouvelles offres** détectées")
+
+        st.divider()
+
+        # KPIs du dernier run
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("🌐 Scrappées",    f"{last['n_scraped']:,}")
+        col2.metric("🆕 Nouvelles",    f"{last['n_new']:,}")
+        col3.metric("🗑️ Retirées",     f"{last['n_removed']:,}")
+        col4.metric("✅ Passées IA",   f"{last['n_passed_ai']:,}")
+        col5.metric("🎯 Scorées",      f"{last['n_scored']:,}")
+
+        st.divider()
+
+        # Nouvelles offres du dernier run
+        today = pd.Timestamp(last["run_date"][:10])
+        df_nouvelles = df_active[
+            df_active["first_seen"].dt.date == pd.Timestamp(last["run_date"][:10]).date()
+        ].copy()
+
+        if not df_nouvelles.empty:
+            tab1, tab2, tab3 = st.tabs([
+                f"✅ Passées IA ({len(df_nouvelles[df_nouvelles['rejection_category'] == 'passed_filter_1'])})",
+                f"❌ Rejetées ({len(df_nouvelles[df_nouvelles['rejection_category'].isin(['metier_exclu','diplome_paramedical','surqualification'])])})",
+                f"🎯 Scorées ({len(df_nouvelles[df_nouvelles['score'].notna()])})",
+            ])
+
+            with tab1:
+                df_p = df_nouvelles[df_nouvelles["rejection_category"] == "passed_filter_1"]
+                if df_p.empty:
+                    st.info("Aucune offre passée le filtre IA.")
+                else:
+                    df_p = df_p[["title","metier","hopital","location","contrat","score","url"]].copy()
+                    df_p.columns = ["Titre","Métier","Hôpital","Lieu","Contrat","Score","URL"]
+                    st.dataframe(df_p, use_container_width=True, hide_index=True,
+                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                                       "Titre": st.column_config.TextColumn(width="large")})
+
+            with tab2:
+                df_r = df_nouvelles[df_nouvelles["rejection_category"].isin(
+                    ["metier_exclu","diplome_paramedical","surqualification","profil_inadequat"]
+                )]
+                if df_r.empty:
+                    st.info("Aucune offre rejetée.")
+                else:
+                    df_r = df_r[["title","metier","rejection_category","rejection_reason","url"]].copy()
+                    df_r["rejection_category"] = df_r["rejection_category"].map(CATEGORY_LABELS)
+                    df_r.columns = ["Titre","Métier","Catégorie","Raison","URL"]
+                    st.dataframe(df_r, use_container_width=True, hide_index=True,
+                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                                       "Titre": st.column_config.TextColumn(width="large")})
+
+            with tab3:
+                df_s = df_nouvelles[df_nouvelles["score"].notna()].sort_values("score", ascending=False)
+                if df_s.empty:
+                    st.info("Aucune offre scorée.")
+                else:
+                    df_s = df_s[["score","priorite","title","metier","hopital","score_raison","url"]].copy()
+                    df_s.columns = ["Score","Priorité","Titre","Métier","Hôpital","Analyse","URL"]
+                    st.dataframe(df_s, use_container_width=True, hide_index=True,
+                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                                       "Titre": st.column_config.TextColumn(width="large"),
+                                       "Score": st.column_config.NumberColumn(format="%d/100")})
+
+        st.divider()
+
+        # Historique des runs
+        st.subheader("📈 Historique des runs")
+        runs_display = runs[["run_date","n_new","n_removed","n_passed_ai","n_scored","status","duration_sec"]].copy()
+        runs_display["run_date"] = runs_display["run_date"].str[:16]
+        runs_display["duration_sec"] = runs_display["duration_sec"].apply(lambda x: f"{x}s")
+        runs_display.columns = ["Date","Nouvelles","Retirées","Passées IA","Scorées","Statut","Durée"]
+        st.dataframe(runs_display, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # Bouton déclenchement manuel
+    st.subheader("🚀 Lancer le pipeline manuellement")
+    st.caption("Lance le scraping + filtres + scoring en une seule commande")
+    if st.button("▶️ Lancer le pipeline maintenant", use_container_width=True, type="primary"):
+        with st.spinner("Pipeline en cours... (peut prendre plusieurs minutes)"):
+            import subprocess
+            result = subprocess.run(
+                ["python", "pipeline.py"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                st.success("✅ Pipeline terminé !")
+                st.code(result.stdout[-2000:])
+            else:
+                st.error("❌ Erreur pipeline")
+                st.code(result.stderr[-2000:])
+        st.cache_data.clear()
+        st.rerun()
