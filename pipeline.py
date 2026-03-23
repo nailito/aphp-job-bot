@@ -6,6 +6,13 @@ from notifier import send_telegram
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
+def notify(msg):
+    print(msg)
+    try:
+        send_telegram(msg)
+    except Exception as e:
+        print(f"(Telegram failed: {e})")
+
 def get_connection():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
@@ -35,6 +42,7 @@ def get_counts():
     return passed_ai, rej_ai, scored
 
 def run_pipeline():
+    notify(f"🚀 Pipeline lancé — {datetime.now().strftime('%H:%M')}")
     print("=" * 60)
     print(f"🏥 Pipeline APHP — {datetime.now().strftime('%d/%m/%Y %H:%M')}")
     print("=" * 60)
@@ -47,6 +55,7 @@ def run_pipeline():
         # 1. SCRAPING
         # ─────────────────────────
         print("\n📡 Étape 1 — Scraping...")
+        notify("📡 Étape 1 — Scraping en cours...")
         from scraper  import scrape_jobs
         from database import init_db, upsert_jobs
         from config   import APHP_JOBS_URL
@@ -64,9 +73,11 @@ def run_pipeline():
         n_removed = len(diff["removed"])
 
         print(f"   📊 {n_scraped} scrapées | {n_new} nouvelles | {n_removed} retirées")
+        notify(f"   📊 {n_scraped} scrapées | {n_new} nouvelles | {n_removed} retirées")
 
         if n_new == 0:
             print("\n✅ Aucune nouvelle offre — pipeline terminé.")
+            notify("😴 Aucune nouvelle offre aujourd’hui")
             save_run(n_scraped, 0, n_removed, 0, 0, 0, "no_new_offers", int(time.time() - start))
             return
 
@@ -74,6 +85,7 @@ def run_pipeline():
         # 2. FILTRE MÉTIER
         # ─────────────────────────
         print("\n🚫 Étape 2 — Filtre métier/contrat...")
+        notify("\n🚫 Étape 2 — Filtre métier/contrat...")
         from main   import mark_rejected
         from config import EXCLUDED_METIERS
 
@@ -102,6 +114,7 @@ def run_pipeline():
 
         for i, job in enumerate(new_jobs, 1):
             print(f"   [{i}/{len(new_jobs)}] {job['title'][:60]}")
+            notify("\n🚫 Étape 2 — Filtre métier/contrat...")
 
             if job.get("metier","") in EXCLUDED_METIERS:
                 mark_rejected(job["id"], "metier_exclu", f"Métier exclu : {job.get('metier','')}")
@@ -114,26 +127,31 @@ def run_pipeline():
                 n_rej_metier += 1
 
         print(f"   📊 {n_rej_metier} rejetées | {len(new_jobs)-n_rej_metier} restantes")
+        notify(f"   📊 {n_rej_metier} rejetées | {len(new_jobs)-n_rej_metier} restantes")
 
         # ─────────────────────────
-        # 3. FILTRE IA (déjà détaillé dans ton code)
+        # 3. FILTRE IA
         # ─────────────────────────
         print("\n🤖 Étape 3 — Filtre IA...")
+        notify("\n🤖 Étape 3 — Filtre IA...")
         from filter_ai import run_filter_1
 
         t0 = time.time()
         run_filter_1()
         print(f"   ⏱ Filtre IA terminé en {int(time.time()-t0)}s")
+        notify(f"   ⏱ Filtre IA terminé en {int(time.time()-t0)}s")
 
         # ─────────────────────────
         # 4. SCORING
         # ─────────────────────────
         print("\n🎯 Étape 4 — Scoring profil...")
+        notify("\n🎯 Étape 4 — Scoring profil...")
         from scorer import run_scorer
 
         t0 = time.time()
         run_scorer()
         print(f"   ⏱ Scoring terminé en {int(time.time()-t0)}s")
+        notify(f"   ⏱ Scoring terminé en {int(time.time()-t0)}s")
 
         # ─────────────────────────
         # 5. STATS
@@ -146,6 +164,12 @@ def run_pipeline():
         print(f"   ✅ {passed_ai} passées IA")
         print(f"   ❌ {rej_ai} rejetées IA")
         print(f"   🎯 {scored} scorées")
+        
+        notify(f"📊 Résumé final :")
+        notify(f"   🆕 {n_new} nouvelles")
+        notify(f"   ✅ {passed_ai} passées IA")
+        notify(f"   ❌ {rej_ai} rejetées IA")
+        notify(f"   🎯 {scored} scorées")
 
         save_run(n_scraped, n_new, n_removed, passed_ai, rej_ai, scored, "success", duration)
 
@@ -153,19 +177,14 @@ def run_pipeline():
         print(f"✅ Pipeline terminé en {duration}s")
         print(f"{'=' * 60}")
 
-        send_telegram(f"""🏥 <b>Pipeline APHP — {datetime.now().strftime('%d/%m/%Y')}</b>
+        notify(f"\n✅ Pipeline terminé en {duration}s")
 
-📡 Scrappées : {n_scraped}
-🆕 Nouvelles : {n_new}
-🗑️ Retirées : {n_removed}
-✅ Passées IA : {passed_ai}
-🎯 Scorées : {scored}
-""")
 
     except Exception as e:
         duration = int(time.time() - start)
         save_run(n_scraped, n_new, n_removed, 0, 0, 0, f"error: {e}", duration)
         print(f"\n❌ Erreur pipeline : {e}")
+        send_telegram(f"❌ Erreur pipeline : {str(e)}")
         raise
 
 if __name__ == "__main__":
