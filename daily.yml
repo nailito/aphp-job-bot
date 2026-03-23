@@ -2,7 +2,7 @@ name: 🏥 Pipeline APHP quotidien
 
 on:
   schedule:
-    - cron: '0 7 * * *'  # 8h heure de Paris (UTC+1)
+    - cron: '0 9 * * *'  # 8h heure de Paris (UTC+1)
   workflow_dispatch:       # Déclenchement manuel depuis GitHub
 
 jobs:

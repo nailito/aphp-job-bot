@@ -2,6 +2,7 @@ import time
 import os
 import psycopg2
 from datetime import datetime
+from notifier import send_telegram
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -116,11 +117,29 @@ def run_pipeline():
         print(f"  📊  {n_new} nouvelles | {passed_ai} passées IA | {scored} scorées")
         print(f"{'=' * 60}")
 
+        send_telegram(f"""🏥 <b>Pipeline APHP — {datetime.now().strftime('%d/%m/%Y')}</b>
+
+        📡 Scrappées : {n_scraped}
+        🆕 Nouvelles : {n_new}
+        🗑️ Retirées : {n_removed}
+        ✅ Passées filtre IA : {passed_ai}
+        🎯 Scorées : {scored}
+
+        👉 <a href="https://aphp-job-bot-hf4xeudf7mupvafapcisn9.streamlit.app/">Voir le dashboard</a>""")
+
+
     except Exception as e:
         duration = int(time.time() - start)
         save_run(n_scraped, n_new, n_removed, 0, 0, 0, f"error: {e}", duration)
         print(f"\n❌ Erreur pipeline : {e}")
         raise
+    
+        send_telegram(f"❌ <b>Pipeline APHP échoué</b>\n\nErreur : {str(e)}")
+
+
+
 
 if __name__ == "__main__":
     run_pipeline()
+
+
