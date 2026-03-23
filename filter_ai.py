@@ -5,6 +5,7 @@ import os
 import psycopg2
 from groq import Groq
 from config import GROQ_API_KEY
+from tqdm import tqdm
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -79,8 +80,7 @@ def check_pass_keywords(job: dict) -> str | None:
             return kw
     return None
 
-PROMPT_TEMPLATE = """
-Tu es un assistant de recrutement. Analyse cette offre selon les règles suivantes.
+PROMPT_TEMPLATE = """Tu es un assistant de recrutement. Analyse cette offre selon les règles suivantes.
 
 ## OFFRE
 Titre   : {title}
@@ -152,12 +152,13 @@ def run_filter_1(limit: int = None):
     if limit:
         jobs = jobs[:limit]
 
-    print(f"\n🤖 Filtre IA étape 1 — {len(jobs)} offres à analyser...")
+    total = len(jobs)
+    print(f"\n🤖 Filtre IA étape 1 — {total} offres à analyser...")
 
     passed = rejected = errors = auto_passed = 0
 
-    for i, job in enumerate(jobs, 1):
-        print(f"  [{i}/{len(jobs)}] {job['title'][:60]}...")
+    for i, job in enumerate(tqdm(jobs, desc="Filtre IA"), 1):
+        print(f"  [{i}/{total}] {job['title'][:60]}...")
 
         if job.get("metier", "") in PASS_METIERS:
             mark_passed(job["id"], f"Passage automatique : métier qualifiant '{job.get('metier')}'")
@@ -249,6 +250,13 @@ def run_filter_1(limit: int = None):
         if not success:
             mark_passed(job["id"], "Erreur analyse — passage par défaut")
             errors += 1
+
+    print("\n📊 Résumé Filtre IA :")
+    print(f"   → {total} analysées")
+    print(f"   → {auto_passed} auto-pass")
+    print(f"   → {passed} acceptées (LLM)")
+    print(f"   → {rejected} rejetées")
+    print(f"   → {errors} erreurs")
 
     print(f"\n✅ Filtre IA étape 1 terminé :")
     print(f"   🙈 Auto-passées  : {auto_passed}")

@@ -1,0 +1,11 @@
+2026-03-23 13:48:57,807 [INFO] 🚀 Pipeline démarré
+2026-03-23 13:48:57,808 [INFO] 📡 Scraping
+2026-03-23 13:54:58,493 [INFO] 💾 Sauvegarde : logs/jobs_raw_2026-03-23_13-48-57.json
+2026-03-23 13:54:58,494 [INFO] 2272 scrapées | 54 nouvelles | 28 retirées
+2026-03-23 13:54:58,494 [INFO] 🚫 Filtre métier
+2026-03-23 13:54:58,677 [INFO] 💾 Sauvegarde : logs/jobs_new_2026-03-23_13-48-57.json
+2026-03-23 13:55:04,535 [INFO] 46 rejetées métier
+2026-03-23 13:55:04,535 [INFO] 🤖 Filtre IA
+2026-03-23 13:55:07,350 [INFO] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-23 13:55:08,276 [INFO] HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2026-03-23 13:55:08,403 [INFO] 🎯 Scoring
