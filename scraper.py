@@ -1,14 +1,11 @@
 import requests
 import random
 import time
+import os
 from datetime import datetime
 from html.parser import HTMLParser
-
 from notifier import send_telegram
 
-# ─────────────────────────
-# CONFIG
-# ─────────────────────────
 API_URL = "https://recrutement.aphp.fr/api/search"
 
 HEADERS = {
@@ -29,8 +26,43 @@ TAG_IDS = {
 session = requests.Session()
 
 # ─────────────────────────
-# UTILS
+# TELEGRAM PROGRESS
 # ─────────────────────────
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+last_message_id  = None
+
+def send_or_edit(message: str):
+    global last_message_id
+
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print(message)
+        return
+
+    try:
+        if last_message_id is None:
+            r = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": message}
+            )
+            last_message_id = r.json()["result"]["message_id"]
+        else:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/editMessageText",
+                json={
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "message_id": last_message_id,
+                    "text": message
+                }
+            )
+    except Exception as e:
+        print(f"Telegram error: {e}")
+
+def progress_bar(current, total, length=20):
+    ratio = current / total if total else 0
+    filled = int(ratio * length)
+    return "█" * filled + "░" * (length - filled)
+
 def notify(msg):
     print(msg)
     try:
@@ -41,6 +73,9 @@ def notify(msg):
 class ScrapingError(Exception):
     pass
 
+# ─────────────────────────
+# UTILS
+# ─────────────────────────
 def strip_html(html: str) -> str:
     class MLStripper(HTMLParser):
         def __init__(self):
@@ -73,12 +108,11 @@ def init_session():
             headers={"User-Agent": HEADERS["User-Agent"]},
             timeout=15
         )
-        notify("✅ Session initialisée")
     except Exception as e:
         raise ScrapingError(f"Init session failed: {e}")
 
 # ─────────────────────────
-# FETCH (SMART RETRY)
+# FETCH
 # ─────────────────────────
 def fetch_page(page: int, retries: int = 3) -> dict:
     payload = {
@@ -92,85 +126,115 @@ def fetch_page(page: int, retries: int = 3) -> dict:
         try:
             r = session.post(API_URL, json=payload, headers=HEADERS, timeout=20)
 
-            # ✅ succès
             if r.status_code == 200:
                 return r.json()
 
-            # 🔁 retry seulement sur erreurs serveur
             if r.status_code >= 500:
                 notify(f"⚠️ HTTP {r.status_code} page {page} (retry {attempt})")
             else:
-                # 💥 erreur client → stop direct
                 raise ScrapingError(f"HTTP {r.status_code} page {page}")
 
         except requests.exceptions.Timeout:
-            notify(f"⏱️ Timeout page {page} ({attempt}/{retries})")
+            notify(f"⏱️ Timeout page {page} ({attempt})")
 
         except requests.exceptions.ConnectionError:
-            notify(f"🔌 Connexion error page {page} ({attempt}/{retries})")
+            notify(f"🔌 Connexion error page {page} ({attempt})")
 
-        # ⏳ backoff progressif (anti-ban)
-        sleep_time = 2 * attempt + random.uniform(0.5, 1.5)
-        time.sleep(sleep_time)
+        time.sleep(2 * attempt + random.uniform(0.5, 1.5))
 
-    # 💥 échec total
-    raise ScrapingError(f"Page {page} failed after {retries} retries")
+    raise ScrapingError(f"Page {page} failed after retries")
 
 # ─────────────────────────
-# MAIN SCRAPER
+# SCRAPER
 # ─────────────────────────
 def scrape_jobs(url=None, max_pages=115) -> list[dict]:
     jobs = []
 
-    notify("🚀 Début scraping")
+    # 🔥 message unique Telegram (barre)
+    send_or_edit("🚀 Initialisation du scraping...")
+
     init_session()
     time.sleep(2)
 
-    for page in range(1, max_pages + 1):
+    # 🔍 première page pour total
+    first_page = fetch_page(1)
+    total_jobs = first_page.get("jobs", {}).get("totalCount", 0)
+    jobs_per_page = len(first_page.get("jobs", {}).get("offers", []))
 
-        notify(f"📄 Page {page}/{max_pages}")
+    if jobs_per_page == 0:
+        raise ScrapingError("Aucune offre page 1")
 
-        data = fetch_page(page)
+    total_pages = int(total_jobs / jobs_per_page) + 1
 
-        offers = data.get("jobs", {}).get("offers", [])
+    start_time = time.time()
 
-        # 💥 blocage détecté
-        if not offers:
-            raise ScrapingError(f"Aucune offre page {page} (blocage probable)")
+    for page in range(1, total_pages + 1):
 
-        for o in offers:
-            tags = parse_tags(o.get("customTags", []))
+        try:
+            data = first_page if page == 1 else fetch_page(page)
 
-            jobs.append({
-                "id":               str(o.get("id", "")),
-                "title":            o.get("title", "Sans titre").strip(),
-                "location":         o.get("location", "Non précisé"),
-                "metier":           tags.get("metier", ""),
-                "hopital":          tags.get("hopital", ""),
-                "contrat":          tags.get("contrat", ""),
-                "teletravail":      tags.get("teletravail", ""),
-                "horaire":          tags.get("horaire", ""),
-                "temps_travail":    tags.get("temps_travail", ""),
-                "filiere":          o.get("jobCategoryLabel", ""),
-                "date_publication": o.get("publicationDate", ""),
-                "description":      strip_html(o.get("description", "")),
-                "url":              f"https://recrutement.aphp.fr/jobs/{o.get('id', '')}",
-                "scraped_at":       datetime.now().isoformat(),
-            })
+            offers = data.get("jobs", {}).get("offers", [])
 
-        total = data.get("jobs", {}).get("totalCount", "?")
+            if not offers:
+                raise ScrapingError(f"Aucune offre page {page} (blocage)")
 
-        # 📊 log toutes les 5 pages
-        if page % 5 == 0:
-            notify(f"📊 {len(jobs)} offres cumulées / {total}")
+            for o in offers:
+                tags = parse_tags(o.get("customTags", []))
 
-        # ⚡ vitesse contrôlée (rapide mais safe)
+                jobs.append({
+                    "id":               str(o.get("id", "")),
+                    "title":            o.get("title", "Sans titre").strip(),
+                    "location":         o.get("location", "Non précisé"),
+                    "metier":           tags.get("metier", ""),
+                    "hopital":          tags.get("hopital", ""),
+                    "contrat":          tags.get("contrat", ""),
+                    "teletravail":      tags.get("teletravail", ""),
+                    "horaire":          tags.get("horaire", ""),
+                    "temps_travail":    tags.get("temps_travail", ""),
+                    "filiere":          o.get("jobCategoryLabel", ""),
+                    "date_publication": o.get("publicationDate", ""),
+                    "description":      strip_html(o.get("description", "")),
+                    "url":              f"https://recrutement.aphp.fr/jobs/{o.get('id', '')}",
+                    "scraped_at":       datetime.now().isoformat(),
+                })
+
+        except Exception as e:
+            notify(f"⚠️ Erreur page {page}: {e}")
+            raise
+
+        # 📊 progression
+        elapsed = int(time.time() - start_time)
+        speed = page / (elapsed / 60 + 0.01)
+
+        bar = progress_bar(page, total_pages)
+        percent = int((page / total_pages) * 100)
+
+        message = f"""
+🚀 Scraping APHP
+
+{bar} {percent}%
+📄 Page {page} / {total_pages}
+📊 {len(jobs)} / {total_jobs} offres
+
+⏱️ {elapsed}s | ⚡ {speed:.1f} pages/min
+"""
+
+        if page % 2 == 0 or page == total_pages:
+            send_or_edit(message)
+
         time.sleep(random.uniform(0.8, 1.5))
 
-    notify(f"✅ Scraping terminé : {len(jobs)} offres")
+    # ✅ résumé final
+    elapsed = int(time.time() - start_time)
 
-    # 🛡️ sécurité anti faux positif
-    if len(jobs) < 2000:
-        raise ScrapingError(f"Scraping incomplet : {len(jobs)} offres")
+    send_or_edit(f"""
+✅ Scraping terminé
+
+📊 {len(jobs)} offres récupérées
+⏱️ {elapsed}s
+""")
+
+    if len(jobs) < total_jobs * 0.7:
+        raise ScrapingError(f"Scraping incomplet ({len(jobs)}/{total_jobs})")
 
     return jobs
