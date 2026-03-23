@@ -1,2 +1,6 @@
-anthropic>=0.25.0
 playwright>=1.40.0
+streamlit
+psycopg2-binary
+pandas
+groq
+requests
