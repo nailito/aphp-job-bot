@@ -344,10 +344,10 @@ elif page == "🚀 À postuler":
             from cover_letter import text_to_pdf
             pdf_bytes = text_to_pdf(current_lm, is_lm=True)
             st.download_button(
-                label="📥 Télécharger LM (PDF)",
+                label="📥 Télécharger LM (txt)",
                 data=pdf_bytes,
-                file_name=f"LM_{job_id}.pdf",
-                mime="application/pdf",
+                file_name=f"LM_{job_id}.txt",
+                mime="application/txt",
                 key=f"dl_lm_{job_id}"
             )
         else:
@@ -423,10 +423,10 @@ elif page == "🚀 À postuler":
             from cover_letter import text_to_pdf
             pdf_bytes = text_to_pdf(current_cv, is_lm=False)
             st.download_button(
-                label="📥 Télécharger CV (PDF)",
+                label="📥 Télécharger CV (txt)",
                 data=pdf_bytes,
-                file_name=f"CV_{job_id}.pdf",
-                mime="application/pdf",
+                file_name=f"CV_{job_id}.txt",
+                mime="application/txt",
                 key=f"dl_cv_{job_id}"
             )
         else:

@@ -257,10 +257,9 @@ Renvoie UNIQUEMENT le texte du CV adapté, sans commentaires."""
 
 
 # ---------------------------------------------------------------------------
-# text_to_pdf — stub de compatibilité avec le dashboard existant
-# Le dashboard appelle cette fonction pour le bouton téléchargement PDF.
-# Pour l'instant elle retourne le texte encodé en UTF-8 (fichier .txt déguisé).
-# Tu peux brancher une vraie lib PDF plus tard sans changer le dashboard.
+# text_to_pdf — retourne le texte brut encodé UTF-8
+# Compatible avec st.download_button (mime="text/plain")
+# Pas de dépendance FPDF — copier-coller dans un traitement de texte ensuite
 # ---------------------------------------------------------------------------
 def text_to_pdf(text: str, is_lm: bool = True) -> bytes:
     return text.encode("utf-8")
