@@ -338,19 +338,18 @@ elif page == "🚀 À postuler":
                 key=f"lm_area_{job_id}",
                 label_visibility="collapsed"
             )
-
-           
-                pdf_bytes = text_to_pdf(current_lm, f"Lettre de motivation — {job['title']}")
-                st.download_button(
-                    label="📥 Télécharger LM (PDF)",
-                    data=pdf_bytes,
-                    file_name=f"LM_{job_id}.pdf",
-                    mime="application/pdf",
-                    key=f"dl_lm_{job_id}"
-                )
-
             if not lm_validated:
                 st.session_state[f"lm_text_{job_id}"] = edited_lm
+
+            from cover_letter import text_to_pdf
+            pdf_bytes = text_to_pdf(current_lm, f"Lettre de motivation — {job['title']}")
+            st.download_button(
+                label="📥 Télécharger LM (PDF)",
+                data=pdf_bytes,
+                file_name=f"LM_{job_id}.pdf",
+                mime="application/pdf",
+                key=f"dl_lm_{job_id}"
+            )
         else:
             st.caption("Clique sur **Générer LM** pour créer une lettre adaptée à cette offre.")
 
@@ -420,6 +419,16 @@ elif page == "🚀 À postuler":
             )
             if not cv_validated:
                 st.session_state[f"cv_text_{job_id}"] = edited_cv
+
+            from cover_letter import text_to_pdf
+            pdf_bytes = text_to_pdf(current_cv, "CV — Naïl Mulatier")
+            st.download_button(
+                label="📥 Télécharger CV (PDF)",
+                data=pdf_bytes,
+                file_name=f"CV_{job_id}.pdf",
+                mime="application/pdf",
+                key=f"dl_cv_{job_id}"
+            )
         else:
             st.caption("Clique sur **Générer CV adapté** pour obtenir un CV ciblé sur ce poste.")
 
