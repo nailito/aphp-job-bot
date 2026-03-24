@@ -148,6 +148,14 @@ def text_to_pdf(text: str, is_lm: bool = False) -> bytes:
     import os
     from datetime import datetime
 
+    # Mapping mois anglais → français (strftime est locale-dépendant sur les serveurs)
+    MOIS_FR = {
+        "January": "janvier", "February": "février", "March": "mars",
+        "April": "avril", "May": "mai", "June": "juin",
+        "July": "juillet", "August": "août", "September": "septembre",
+        "October": "octobre", "November": "novembre", "December": "décembre"
+    }
+
     base = os.path.join(os.path.dirname(__file__), "fonts")
     pdf = FPDF()
     pdf.add_page()
@@ -159,28 +167,31 @@ def text_to_pdf(text: str, is_lm: bool = False) -> bytes:
     pdf.add_font("FreeSerif", "I",  os.path.join(base, "FreeSerifItalic.ttf"))
     pdf.add_font("FreeSerif", "BI", os.path.join(base, "FreeSerifBoldItalic.ttf"))
 
+    page_width = pdf.w - pdf.l_margin - pdf.r_margin  # largeur utile
+
     if is_lm:
-        # ── En-tête : Prénom Nom en gras
+        # ── En-tête gauche : Nom en gras
         pdf.set_font("FreeSerif", "B", 12)
-        pdf.cell(0, 6, text="Naïl Mulatier", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 7, text="Naïl Mulatier", new_x="LMARGIN", new_y="NEXT")
 
-        # ── Téléphone collé
-        pdf.set_font("FreeSerif", "", 12)
+        # ── Coordonnées (interlignes légèrement réduits)
+        pdf.set_font("FreeSerif", "", 11)
         pdf.cell(0, 6, text="+33 6 73 83 31 40", new_x="LMARGIN", new_y="NEXT")
-
-        # ── Email collé
         pdf.cell(0, 6, text="nail.mulatier@orange.fr", new_x="LMARGIN", new_y="NEXT")
 
-        # ── Date
-        pdf.ln(8)
-        pdf.cell(0, 6,
-                 text=f"Paris, le {datetime.now().strftime('%d %B %Y')}",
-                 new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(8)
+        # ── Date alignée à DROITE
+        pdf.ln(10)
+        now = datetime.now()
+        mois = MOIS_FR.get(now.strftime("%B"), now.strftime("%B"))
+        date_str = f"Paris, le {now.day} {mois} {now.year}"
+        pdf.set_font("FreeSerif", "", 11)
+        pdf.cell(page_width, 6, text=date_str, align="R", new_x="LMARGIN", new_y="NEXT")
 
-    # ── Corps avec alinéas en début de paragraphe
+        pdf.ln(10)
+
+    # ── Corps
     pdf.set_font("FreeSerif", "", 12)
-    paragraphs = text.split("\n\n")  # double saut = nouveau paragraphe
+    paragraphs = text.split("\n\n")
 
     for i, para in enumerate(paragraphs):
         lines = para.strip().split("\n")
@@ -188,10 +199,10 @@ def text_to_pdf(text: str, is_lm: bool = False) -> bytes:
             line = line.strip()
             if not line:
                 continue
-            # Alinéa uniquement sur la première ligne de chaque paragraphe
+            # Alinéa (~1 cm) sur la 1ère ligne de chaque paragraphe (sauf le 1er : "Madame, Monsieur,")
             if j == 0 and i > 0:
-                pdf.cell(10)  # alinéa ~1cm
+                pdf.cell(10)  # indent
             pdf.multi_cell(0, 7, text=line)
-        pdf.ln(3)  # espace entre paragraphes
+        pdf.ln(4)  # espace entre paragraphes
 
     return bytes(pdf.output())
