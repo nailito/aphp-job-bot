@@ -698,27 +698,27 @@ Description : {str(row.get('description', ''))[:1500]}
                             st.rerun()
 
     with tab_done:
-    if df_deja_evalues.empty:
-        st.info("Aucun feedback encore.")
-    else:
-        # On joint avec feedbacks pour récupérer decision/commentaire
-        feedback_map = {f["job_id"]: f for f in get_feedbacks()}
+        if df_deja_evalues.empty:
+            st.info("Aucun feedback encore.")
+        else:
+            # On joint avec feedbacks pour récupérer decision/commentaire
+            feedback_map = {f["job_id"]: f for f in get_feedbacks()}
 
-        for _, row in df_deja_evalues.iterrows():
-            f = feedback_map.get(row["id"], {})
+            for _, row in df_deja_evalues.iterrows():
+                f = feedback_map.get(row["id"], {})
 
-            with st.expander(f"{f.get('decision','?')} **{row['title']}** — {row['hopital']}"):
-                st.markdown(f"**Feedback :** {f.get('commentaire','–')}")
-                st.markdown(f"**Date :** {f.get('created_at','')[:10]}")
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.link_button("Voir l'offre →", row["url"])
-                with col2:
-                    if st.button("🗑️ Supprimer", key=f"del_{row['id']}", use_container_width=True):
-                        delete_feedback(row["id"])
-                        st.cache_data.clear()
-                        st.rerun()
+                with st.expander(f"{f.get('decision','?')} **{row['title']}** — {row['hopital']}"):
+                    st.markdown(f"**Feedback :** {f.get('commentaire','–')}")
+                    st.markdown(f"**Date :** {f.get('created_at','')[:10]}")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.link_button("Voir l'offre →", row["url"])
+                    with col2:
+                        if st.button("🗑️ Supprimer", key=f"del_{row['id']}", use_container_width=True):
+                            delete_feedback(row["id"])
+                            st.cache_data.clear()
+                            st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "🆕 Nouvelles offres":
