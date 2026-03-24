@@ -342,7 +342,7 @@ elif page == "🚀 À postuler":
                 st.session_state[f"lm_text_{job_id}"] = edited_lm
 
             from cover_letter import text_to_pdf
-            pdf_bytes = text_to_pdf(current_lm, f"Lettre de motivation — {job['title']}")
+            pdf_bytes = text_to_pdf(current_lm, is_lm=True)
             st.download_button(
                 label="📥 Télécharger LM (PDF)",
                 data=pdf_bytes,
@@ -421,7 +421,7 @@ elif page == "🚀 À postuler":
                 st.session_state[f"cv_text_{job_id}"] = edited_cv
 
             from cover_letter import text_to_pdf
-            pdf_bytes = text_to_pdf(current_cv, "CV — Naïl Mulatier")
+            pdf_bytes = text_to_pdf(current_cv, is_lm=False)
             st.download_button(
                 label="📥 Télécharger CV (PDF)",
                 data=pdf_bytes,

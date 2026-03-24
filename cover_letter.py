@@ -143,27 +143,55 @@ Retourne uniquement le CV adapté en texte brut, formaté proprement."""
 
 
 
-def text_to_pdf(text: str, title: str = "") -> bytes:
-    """Convertit un texte en PDF et retourne les bytes."""
+def text_to_pdf(text: str, is_lm: bool = False) -> bytes:
+    """Convertit un texte en PDF avec police FreeSerif (Times-like, Unicode)."""
+    import os
+    from datetime import datetime
+
+    base = os.path.join(os.path.dirname(__file__), "fonts")
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_margins(15, 15, 15)  # marges réduites
-    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(25, 25, 25)
+    pdf.set_auto_page_break(auto=True, margin=20)
 
-    # Titre
-    if title:
-        pdf.set_font("Helvetica", "B", 12)
-        safe_title = title.encode("latin-1", errors="replace").decode("latin-1")
-        pdf.multi_cell(0, 8, text=safe_title)
-        pdf.ln(4)
+    pdf.add_font("FreeSerif", "",   os.path.join(base, "FreeSerif.ttf"))
+    pdf.add_font("FreeSerif", "B",  os.path.join(base, "FreeSerifBold.ttf"))
+    pdf.add_font("FreeSerif", "I",  os.path.join(base, "FreeSerifItalic.ttf"))
+    pdf.add_font("FreeSerif", "BI", os.path.join(base, "FreeSerifBoldItalic.ttf"))
 
-    # Corps
-    pdf.set_font("Helvetica", size=10)  # police réduite
-    for line in text.split("\n"):
-        safe_line = line.encode("latin-1", errors="replace").decode("latin-1")
-        if safe_line.strip() == "":
-            pdf.ln(4)
-        else:
-            pdf.multi_cell(0, 5, text=safe_line)
+    if is_lm:
+        # ── En-tête : Prénom Nom en gras
+        pdf.set_font("FreeSerif", "B", 12)
+        pdf.cell(0, 6, text="Naïl Mulatier", new_x="LMARGIN", new_y="NEXT")
+
+        # ── Téléphone collé
+        pdf.set_font("FreeSerif", "", 12)
+        pdf.cell(0, 6, text="+33 6 73 83 31 40", new_x="LMARGIN", new_y="NEXT")
+
+        # ── Email collé
+        pdf.cell(0, 6, text="nail.mulatier@orange.fr", new_x="LMARGIN", new_y="NEXT")
+
+        # ── Date
+        pdf.ln(8)
+        pdf.cell(0, 6,
+                 text=f"Paris, le {datetime.now().strftime('%d %B %Y')}",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(8)
+
+    # ── Corps avec alinéas en début de paragraphe
+    pdf.set_font("FreeSerif", "", 12)
+    paragraphs = text.split("\n\n")  # double saut = nouveau paragraphe
+
+    for i, para in enumerate(paragraphs):
+        lines = para.strip().split("\n")
+        for j, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+            # Alinéa uniquement sur la première ligne de chaque paragraphe
+            if j == 0 and i > 0:
+                pdf.cell(10)  # alinéa ~1cm
+            pdf.multi_cell(0, 7, text=line)
+        pdf.ln(3)  # espace entre paragraphes
 
     return bytes(pdf.output())
