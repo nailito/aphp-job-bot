@@ -148,6 +148,107 @@ def text_to_pdf(text: str, is_lm: bool = False) -> bytes:
     import os
     from datetime import datetime
 
+    MOIS_FR = {
+        "January": "janvier", "February": "février", "March": "mars",
+        "April": "avril", "May": "mai", "June": "juin",
+        "July": "juillet", "August": "août", "September": "septembre",
+        "October": "octobre", "November": "novembre", "December": "décembre"
+    }
+
+    FONT_SIZE = 12      # taille unique pour tout le document
+    LINE_H = 7          # hauteur de ligne corps
+    HEADER_LINE_H = 6   # hauteur de ligne en-tête
+    INDENT = 10         # alinéa 1ère ligne (~1 cm)
+    PARA_SPACE = 5      # espace entre paragraphes
+
+    base = os.path.join(os.path.dirname(__file__), "fonts")
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_margins(25, 25, 25)
+    pdf.set_auto_page_break(auto=True, margin=20)
+
+    pdf.add_font("FreeSerif", "",   os.path.join(base, "FreeSerif.ttf"))
+    pdf.add_font("FreeSerif", "B",  os.path.join(base, "FreeSerifBold.ttf"))
+    pdf.add_font("FreeSerif", "I",  os.path.join(base, "FreeSerifItalic.ttf"))
+    pdf.add_font("FreeSerif", "BI", os.path.join(base, "FreeSerifBoldItalic.ttf"))
+
+    page_width = pdf.w - pdf.l_margin - pdf.r_margin
+
+    if is_lm:
+        # ── Nom en gras + souligné
+        pdf.set_font("FreeSerif", "B", FONT_SIZE)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, HEADER_LINE_H, text="Naïl Mulatier", new_x="LMARGIN", new_y="NEXT")
+
+        # Soulignement manuel sous le nom
+        y_underline = pdf.get_y()
+        pdf.set_draw_color(0, 0, 0)
+        pdf.set_line_width(0.3)
+        name_width = pdf.get_string_width("Naïl Mulatier")
+        pdf.line(pdf.l_margin, y_underline, pdf.l_margin + name_width, y_underline)
+        pdf.ln(1)
+
+        # ── Coordonnées (même taille 12pt)
+        pdf.set_font("FreeSerif", "", FONT_SIZE)
+        pdf.cell(0, HEADER_LINE_H, text="+33 6 73 83 31 40", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, HEADER_LINE_H, text="nail.mulatier@orange.fr", new_x="LMARGIN", new_y="NEXT")
+
+        # ── Date alignée à droite
+        pdf.ln(10)
+        now = datetime.now()
+        mois = MOIS_FR.get(now.strftime("%B"), now.strftime("%B"))
+        date_str = f"Paris, le {now.day} {mois} {now.year}"
+        pdf.set_font("FreeSerif", "", FONT_SIZE)
+        pdf.cell(page_width, HEADER_LINE_H, text=date_str, align="R",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(10)
+
+    # ── Corps du texte
+    pdf.set_font("FreeSerif", "", FONT_SIZE)
+    paragraphs = text.split("\n\n")
+
+    for i, para in enumerate(paragraphs):
+        lines = para.strip().split("\n")
+        for j, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+
+            # Alinéa uniquement sur la 1ère ligne de chaque paragraphe (sauf le tout premier)
+            use_indent = (j == 0 and i > 0)
+            available_width = page_width - (INDENT if use_indent else 0)
+
+            # Découper la ligne en sous-lignes manuellement pour contrôler l'indent
+            words = line.split(" ")
+            current_line = ""
+            first_line_of_para = True
+
+            for word in words:
+                test = (current_line + " " + word).strip()
+                w = page_width - (INDENT if (use_indent and first_line_of_para) else 0)
+                if pdf.get_string_width(test) <= w:
+                    current_line = test
+                else:
+                    # Imprimer la ligne courante
+                    if use_indent and first_line_of_para:
+                        pdf.cell(INDENT)
+                        first_line_of_para = False
+                    pdf.cell(0, LINE_H, text=current_line, new_x="LMARGIN", new_y="NEXT")
+                    current_line = word
+
+            # Dernière ligne du segment
+            if current_line:
+                if use_indent and first_line_of_para:
+                    pdf.cell(INDENT)
+                pdf.multi_cell(0, LINE_H, text=current_line)
+
+        pdf.ln(PARA_SPACE)
+
+    return bytes(pdf.output())
+    """Convertit un texte en PDF avec police FreeSerif (Times-like, Unicode)."""
+    import os
+    from datetime import datetime
+
     # Mapping mois anglais → français (strftime est locale-dépendant sur les serveurs)
     MOIS_FR = {
         "January": "janvier", "February": "février", "March": "mars",
