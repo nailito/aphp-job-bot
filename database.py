@@ -191,3 +191,41 @@ def delete_feedback(job_id: str):
         with conn.cursor() as cur:
             cur.execute("DELETE FROM feedbacks WHERE job_id = %s", (job_id,))
         conn.commit()
+
+
+def get_application(job_id: str) -> dict | None:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM applications WHERE job_id = %s", (job_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in cur.description]
+            return dict(zip(cols, row))
+
+def save_application(job_id: str, **kwargs):
+    """Upsert une application — passe les champs à mettre à jour en kwargs."""
+    fields = {k: v for k, v in kwargs.items()}
+    fields["updated_at"] = datetime.now().isoformat()
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            existing = cur.execute("SELECT job_id FROM applications WHERE job_id = %s", (job_id,))
+            cur.execute("SELECT job_id FROM applications WHERE job_id = %s", (job_id,))
+            exists = cur.fetchone()
+
+            if exists:
+                set_clause = ", ".join([f"{k} = %s" for k in fields])
+                cur.execute(
+                    f"UPDATE applications SET {set_clause} WHERE job_id = %s",
+                    list(fields.values()) + [job_id]
+                )
+            else:
+                fields["job_id"] = job_id
+                cols = ", ".join(fields.keys())
+                vals = ", ".join(["%s"] * len(fields))
+                cur.execute(
+                    f"INSERT INTO applications ({cols}) VALUES ({vals})",
+                    list(fields.values())
+                )
+        conn.commit()
