@@ -4,6 +4,7 @@ import os
 import pandas as pd
 from datetime import datetime
 from config import EXCLUDED_METIERS
+from cover_letter import text_to_pdf
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -337,6 +338,17 @@ elif page == "🚀 À postuler":
                 key=f"lm_area_{job_id}",
                 label_visibility="collapsed"
             )
+
+           
+                pdf_bytes = text_to_pdf(current_lm, f"Lettre de motivation — {job['title']}")
+                st.download_button(
+                    label="📥 Télécharger LM (PDF)",
+                    data=pdf_bytes,
+                    file_name=f"LM_{job_id}.pdf",
+                    mime="application/pdf",
+                    key=f"dl_lm_{job_id}"
+                )
+
             if not lm_validated:
                 st.session_state[f"lm_text_{job_id}"] = edited_lm
         else:

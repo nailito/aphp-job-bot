@@ -1,5 +1,9 @@
 import os
 from groq import Groq
+from fpdf import FPDF
+import io
+
+
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
@@ -136,3 +140,26 @@ Retourne uniquement le CV adapté en texte brut, formaté proprement."""
         messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content.strip()
+
+
+
+def text_to_pdf(text: str, title: str = "") -> bytes:
+    """Convertit un texte en PDF et retourne les bytes."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_margins(20, 20, 20)
+
+    # Titre
+    if title:
+        pdf.set_font("Helvetica", "B", 14)
+        safe_title = title.encode("latin-1", errors="replace").decode("latin-1")
+        pdf.cell(0, 10, text=safe_title, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
+
+    # Corps
+    pdf.set_font("Helvetica", size=11)
+    for line in text.split("\n"):
+        safe_line = line.encode("latin-1", errors="replace").decode("latin-1")
+        pdf.multi_cell(0, 6, text=safe_line)
+
+    return pdf.output()
