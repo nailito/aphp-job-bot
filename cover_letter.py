@@ -147,19 +147,23 @@ def text_to_pdf(text: str, title: str = "") -> bytes:
     """Convertit un texte en PDF et retourne les bytes."""
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_margins(20, 20, 20)
+    pdf.set_margins(15, 15, 15)  # marges réduites
+    pdf.set_auto_page_break(auto=True, margin=15)
 
     # Titre
     if title:
-        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_font("Helvetica", "B", 12)
         safe_title = title.encode("latin-1", errors="replace").decode("latin-1")
-        pdf.cell(0, 10, text=safe_title, new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, 8, text=safe_title)
         pdf.ln(4)
 
     # Corps
-    pdf.set_font("Helvetica", size=11)
+    pdf.set_font("Helvetica", size=10)  # police réduite
     for line in text.split("\n"):
         safe_line = line.encode("latin-1", errors="replace").decode("latin-1")
-        pdf.multi_cell(0, 6, text=safe_line)
+        if safe_line.strip() == "":
+            pdf.ln(4)
+        else:
+            pdf.multi_cell(0, 5, text=safe_line)
 
-    return pdf.output()
+    return bytes(pdf.output())
