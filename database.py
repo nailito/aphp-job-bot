@@ -134,7 +134,7 @@ def get_stats() -> dict:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM jobs")
             total = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM jobs WHERE status = 'active'")
+            cur.execute("SELECT id FROM jobs")
             active = cur.fetchone()[0]
             cur.execute("SELECT COUNT(*) FROM jobs WHERE status = 'removed'")
             removed = cur.fetchone()[0]
@@ -159,7 +159,17 @@ def save_feedback(job_id: str, decision: str, tags: list, commentaire: str):
                     INSERT INTO feedbacks (job_id, decision, tags, commentaire, created_at)
                     VALUES (%s,%s,%s,%s,%s)
                 """, (job_id, decision, str(tags), commentaire, now))
+
+            cur.execute("""
+                UPDATE jobs
+                SET rejection_category = 'reviewed'
+                WHERE id = %s
+            """, (job_id,))
+
+
         conn.commit()
+
+        
 
 def get_feedbacks() -> list[dict]:
     with get_connection() as conn:

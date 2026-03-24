@@ -59,8 +59,10 @@ n_a_trier      = len(df_active[df_active["rejection_category"] == "a_trier"])
 
 st.sidebar.title("🏥 Veille APHP")
 st.sidebar.caption(f"Sync : {str(df_all['last_seen'].max())[:16]}")
-page = st.sidebar.radio("Navigation", [
+
+pages = [
     "📊 Tableau de bord",
+    "🚀 À postuler",
     "📰 Rapport du jour",
     "🔍 Explorer les offres",
     "✅ Offres acceptées par l'IA",
@@ -69,65 +71,271 @@ page = st.sidebar.radio("Navigation", [
     "🆕 Nouvelles offres",
     "🗑️ Offres retirées du site",
     "⚙️  Config",
-])
+]
+
+page = st.sidebar.radio(
+    "Navigation",
+    pages,
+    index=pages.index(st.session_state.get("nav", "📊 Tableau de bord"))
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 if page == "📊 Tableau de bord":
     st.title("📊 Tableau de bord")
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total APHP",           f"{n_total:,}")
-    col2.metric("Après filtre métier",  f"{n_apres_metier:,}", f"-{len(df_rej_metier)}")
-    col3.metric("Après filtre IA",      f"{n_passed_ai:,}", f"-{len(df_rej_ai)} rejetées · {n_a_trier} restantes")
-    col4.metric("Score profil complet", f"{n_scored:,}", "À venir" if n_scored == 0 else None)
+    # ── Bandeau dernière actualisation
+    conn = get_connection()
+    runs = pd.read_sql("SELECT * FROM pipeline_runs ORDER BY run_date DESC LIMIT 1", conn)
+    conn.close()
+
+    if not runs.empty:
+        last = runs.iloc[0]
+        run_date_str = last["run_date"][:16].replace("T", " ")
+        date_fmt = run_date_str[:10].replace("-", "/")
+        heure_fmt = run_date_str[11:16].replace(":", "h")
+        is_success = str(last["status"]).startswith("success") or last["status"] == "no_new_offers"
+        emoji = "✅" if is_success else "❌"
+        st.info(f"{emoji} Dernière actualisation le **{date_fmt}** à **{heure_fmt}** — statut : `{last['status']}`")
+    else:
+        st.warning("⚠️ Aucun pipeline exécuté pour l'instant.")
 
     st.divider()
 
-    tab1, tab2, tab3 = st.tabs([
-        f"❌ Rejetées filtre métier/contrat ({len(df_rej_metier)})",
-        f"🤖 Rejetées filtre IA ({len(df_rej_ai)})",
-        f"⏳ À trier par IA ({n_a_trier})",
+    # ── Meilleure offre évaluée
+    from database import get_feedbacks
+    feedbacks = get_feedbacks()
+    feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
+
+    df_top = df_active[
+        (df_active["id"].isin(feedbacks_positifs)) &
+        (df_active["score"].notna())
+    ].copy()
+
+    if not df_top.empty:
+        df_top["score_num"] = pd.to_numeric(df_top["score"], errors="coerce")
+        best = df_top.sort_values("score_num", ascending=False).iloc[0]
+
+        st.markdown("### 🏆 Meilleure offre évaluée")
+        col_card, col_btn = st.columns([4, 1])
+        with col_card:
+            score_val = int(best["score"]) if pd.notna(best["score"]) else "–"
+            prio = best.get("priorite", "–")
+            st.markdown(f"""
+            <div style="
+                background:#f0f9ff;
+                border-left:4px solid #6366f1;
+                padding:16px;
+                border-radius:8px;
+                color:#111;
+            ">
+                <div style="font-size:1.2rem;font-weight:700;color:#111">
+                    {best['title']}
+                </div>
+                <div style="color:#444;margin-top:4px">
+                    🏥 {best['hopital']} · 📍 {best['location']} · 📄 {best['contrat']}
+                </div>
+                <div style="margin-top:8px;color:#111">
+                    🎯 <b>Score : {score_val}/100</b> · Priorité : <b>{prio}</b>
+                </div>
+                <div style="color:#555;margin-top:6px;font-size:0.9rem">
+                    {best.get('score_raison','')}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        with col_btn:
+            st.markdown("<br><br>", unsafe_allow_html=True)
+            st.link_button("🚀 Postuler →", best["url"], use_container_width=True, type="primary")
+    else:
+        st.info("🏆 Aucune offre évaluée positivement pour l'instant — rendez-vous dans **📝 À évaluer**.")
+
+    st.divider()
+
+    # ── Compteurs offres à évaluer / à postuler
+    feedbacks_existants = {f["job_id"] for f in feedbacks}
+    n_a_evaluer  = len(df_active[
+        (df_active["rejection_category"] == "passed_filter_1") &
+        (~df_active["id"].isin(feedbacks_existants))
+    ])
+    n_a_postuler = len(df_active[df_active["id"].isin(feedbacks_positifs)])
+
+    col_ev, col_pos = st.columns(2)
+    if "nav" not in st.session_state:
+        st.session_state.nav = "📊 Tableau de bord"
+
+    col_ev, col_pos = st.columns(2)
+
+    with col_ev:
+        if st.button(f"📝 Offres à évaluer\n\n{n_a_evaluer}", use_container_width=True):
+            st.session_state.nav = "📝 À évaluer"
+            st.rerun()
+
+    with col_pos:
+        if st.button(f"🚀 Offres à postuler\n\n{n_a_postuler}", use_container_width=True):
+            st.session_state.nav = "🚀 Postuler"  # future page
+            st.rerun()
+
+    st.divider()
+
+    # ── Camembert pipeline
+    import plotly.graph_objects as go
+
+    n_total_actif   = len(df_active)
+    n_rej_metier    = len(df_active[df_active["rejection_category"] == "metier_exclu"])
+    n_rej_ia        = len(df_active[df_active["rejection_category"].isin([
+        "diplome_paramedical", "surqualification", "profil_inadequat"
+    ])])
+    n_scored_val    = len(df_active[df_active["score"].notna()])
+    n_passed_no_score = len(df_active[
+        (df_active["rejection_category"] == "passed_filter_1") &
+        (df_active["score"].isna())
     ])
 
-    with tab1:
-        if df_rej_metier.empty:
-            st.info("Lance `python main.py` pour appliquer les filtres.")
-        else:
-            df_m = df_rej_metier[["title","metier","contrat","filiere","hopital","location","rejection_reason","url"]].copy()
-            df_m.columns = ["Titre","Métier","Contrat","Filière","Hôpital","Lieu","Raison","URL"]
-            st.dataframe(df_m, use_container_width=True, hide_index=True,
-                column_config={
-                    "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                    "Titre": st.column_config.TextColumn(width="large"),
-                })
+    labels = [
+        "❌ Filtre métier/contrat",
+        "🤖 Rejeté filtre IA",
+        "⏳ Passé IA (sans score)",
+        "🎯 Scorées",
+    ]
+    values = [n_rej_metier, n_rej_ia, n_passed_no_score, n_scored_val]
+    colors = ["#f87171", "#fb923c", "#a78bfa", "#34d399"]
 
-    with tab2:
-        if df_rej_ai.empty:
-            st.info("Lance `python filter_ai.py` pour appliquer le filtre IA.")
-        else:
-            df_ai = df_rej_ai[["title","metier","filiere","rejection_category","rejection_reason","url"]].copy()
-            df_ai["rejection_category"] = df_ai["rejection_category"].map(CATEGORY_LABELS)
-            df_ai.columns = ["Offre","Métier","Filière","Raison simplifiée","Raison complète (IA)","URL"]
-            st.dataframe(df_ai, use_container_width=True, hide_index=True,
-                column_config={
-                    "URL":                  st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                    "Offre":                st.column_config.TextColumn(width="large"),
-                    "Raison complète (IA)": st.column_config.TextColumn(width="large"),
-                })
+    fig = go.Figure(data=[go.Pie(
+        labels=labels,
+        values=values,
+        hole=0.45,
+        marker=dict(colors=colors),
+        textinfo="label+percent",
+        hovertemplate="%{label}<br>%{value} offres<br>%{percent}<extra></extra>",
+    )])
+    fig.update_layout(
+        title=dict(text=f"Répartition des {n_total_actif:,} offres APHP actives", x=0.5),
+        showlegend=False,
+        margin=dict(t=60, b=20, l=20, r=20),
+        height=420,
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-    with tab3:
-        df_a_trier = df_active[df_active["rejection_category"] == "a_trier"]
-        if df_a_trier.empty:
-            st.info("Aucune offre en attente. Lance `python filter_ai.py` pour continuer.")
-        else:
-            st.caption(f"{len(df_a_trier)} offres en attente d'analyse IA")
-            df_t = df_a_trier[["title","metier","filiere","hopital","location","contrat","url"]].copy()
-            df_t.columns = ["Titre","Métier","Filière","Hôpital","Lieu","Contrat","URL"]
-            st.dataframe(df_t, use_container_width=True, hide_index=True,
-                column_config={
-                    "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                    "Titre": st.column_config.TextColumn(width="large"),
-                })
+
+elif page == "🚀 À postuler":
+    st.title("🚀 Offres à postuler")
+
+    from database import get_feedbacks
+    feedbacks = get_feedbacks()
+
+    feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
+
+    df_postuler = df_active[df_active["id"].isin(feedbacks_positifs)].copy()
+
+    if df_postuler.empty:
+        st.info("Aucune offre à postuler pour le moment")
+        st.stop()
+
+    # ─────────────────────────────────────────────
+    # 🧠 TRI
+    df_postuler["score_num"] = pd.to_numeric(df_postuler["score"], errors="coerce")
+    df_postuler = df_postuler.sort_values("score_num", ascending=False)
+
+    # ─────────────────────────────────────────────
+    # 📌 SESSION STATE sélection
+    if "selected_job" not in st.session_state:
+        st.session_state.selected_job = df_postuler.iloc[0]["id"]
+
+    # ─────────────────────────────────────────────
+    # 🧱 LAYOUT
+    col_left, col_right = st.columns([1, 2])
+
+    # =========================================================
+    # 📋 COLONNE GAUCHE — LISTE
+    with col_left:
+        st.subheader("📋 Offres")
+
+        for _, row in df_postuler.iterrows():
+            job_id = row["id"]
+            selected = job_id == st.session_state.selected_job
+
+            score = int(row["score"]) if pd.notna(row["score"]) else "–"
+            emoji = "⭐" if job_id in feedbacks_positifs else "👍"
+
+            label = f"{emoji} {row['title'][:40]}... ({score})"
+
+            if st.button(label, key=f"job_{job_id}", use_container_width=True):
+                st.session_state.selected_job = job_id
+                st.rerun()
+
+    # =========================================================
+    # 📄 COLONNE DROITE — DÉTAIL
+    with col_right:
+        job = df_postuler[df_postuler["id"] == st.session_state.selected_job].iloc[0]
+
+        st.subheader(job["title"])
+
+        st.markdown(f"""
+        **🏥 {job['hopital']}**  
+        📍 {job['location']}  
+        📄 {job['contrat']}  
+        """)
+
+        st.divider()
+
+        # 🎯 Score
+        col1, col2 = st.columns(2)
+        score = int(job["score"]) if pd.notna(job["score"]) else "–"
+
+        col1.metric("Score", f"{score}/100")
+        col2.metric("Priorité", job.get("priorite", "–"))
+
+        # 🧠 Analyse
+        if pd.notna(job.get("score_raison")):
+            st.markdown("### 🧠 Analyse IA")
+            st.write(job["score_raison"])
+
+        # 👍 Points forts
+        if pd.notna(job.get("score_points_forts")):
+            try:
+                import json
+                pf = json.loads(job["score_points_forts"])
+                if pf:
+                    st.markdown("### ✅ Points forts")
+                    for p in pf:
+                        st.markdown(f"- {p}")
+            except:
+                pass
+
+        # ⚠️ Points faibles
+        if pd.notna(job.get("score_points_faibles")):
+            try:
+                import json
+                pf = json.loads(job["score_points_faibles"])
+                if pf:
+                    st.markdown("### ⚠️ Points faibles")
+                    for p in pf:
+                        st.markdown(f"- {p}")
+            except:
+                pass
+
+        st.divider()
+
+        # 🚀 ACTIONS
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.link_button("🚀 Voir l'offre", job["url"], use_container_width=True)
+
+        with col2:
+            if st.button("❌ Retirer", use_container_width=True):
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            DELETE FROM feedback
+                            WHERE job_id = %s
+                        """, (job["id"],))
+                    conn.commit()
+
+                st.success("Offre retirée des candidatures")
+                st.rerun()
+
+        with col3:
+            st.button("📌 Marquer comme postulé (à venir)", use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📰 Rapport du jour":
@@ -490,22 +698,27 @@ Description : {str(row.get('description', ''))[:1500]}
                             st.rerun()
 
     with tab_done:
-        feedbacks = get_feedbacks()
-        if not feedbacks:
-            st.info("Aucun feedback encore.")
-        else:
-            for f in feedbacks:
-                with st.expander(f"{f['decision']} **{f['title']}** — {f['hopital']}"):
-                    st.markdown(f"**Feedback :** {f['commentaire'] or '–'}")
-                    st.markdown(f"**Date :** {f['created_at'][:10]}")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.link_button("Voir l'offre →", f["url"])
-                    with col2:
-                        if st.button("🗑️ Supprimer", key=f"del_{f['job_id']}", use_container_width=True):
-                            delete_feedback(f["job_id"])
-                            st.cache_data.clear()
-                            st.rerun()
+    if df_deja_evalues.empty:
+        st.info("Aucun feedback encore.")
+    else:
+        # On joint avec feedbacks pour récupérer decision/commentaire
+        feedback_map = {f["job_id"]: f for f in get_feedbacks()}
+
+        for _, row in df_deja_evalues.iterrows():
+            f = feedback_map.get(row["id"], {})
+
+            with st.expander(f"{f.get('decision','?')} **{row['title']}** — {row['hopital']}"):
+                st.markdown(f"**Feedback :** {f.get('commentaire','–')}")
+                st.markdown(f"**Date :** {f.get('created_at','')[:10]}")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.link_button("Voir l'offre →", row["url"])
+                with col2:
+                    if st.button("🗑️ Supprimer", key=f"del_{row['id']}", use_container_width=True):
+                        delete_feedback(row["id"])
+                        st.cache_data.clear()
+                        st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "🆕 Nouvelles offres":

@@ -1,6 +1,7 @@
 import requests
 import random
 import time
+import math
 import os
 from datetime import datetime
 from html.parser import HTMLParser
@@ -149,6 +150,8 @@ def fetch_page(page: int, retries: int = 3) -> dict:
 # ─────────────────────────
 def scrape_jobs(url=None, max_pages=115) -> list[dict]:
     jobs = []
+    seen_ids = set()
+    page_stats = []  # DEBUG stabilité
 
     # 🔥 message unique Telegram (barre)
     send_or_edit("🚀 Initialisation du scraping...")
@@ -164,7 +167,7 @@ def scrape_jobs(url=None, max_pages=115) -> list[dict]:
     if jobs_per_page == 0:
         raise ScrapingError("Aucune offre page 1")
 
-    total_pages = int(total_jobs / jobs_per_page) + 1
+    total_pages = math.ceil(total_jobs / jobs_per_page)
 
     start_time = time.time()
 
@@ -175,14 +178,24 @@ def scrape_jobs(url=None, max_pages=115) -> list[dict]:
 
             offers = data.get("jobs", {}).get("offers", [])
 
+            # DEBUG stabilité
+            page_stats.append((page, len(offers)))
+            print(f"[DEBUG] PAGE {page} → {len(offers)} offres")
+
             if not offers:
                 raise ScrapingError(f"Aucune offre page {page} (blocage)")
 
             for o in offers:
+                job_id = str(o.get("id", ""))
+
+                if job_id in seen_ids:
+                    continue
+                seen_ids.add(job_id)
+
                 tags = parse_tags(o.get("customTags", []))
 
                 jobs.append({
-                    "id":               str(o.get("id", "")),
+                    "id":               job_id,
                     "title":            o.get("title", "Sans titre").strip(),
                     "location":         o.get("location", "Non précisé"),
                     "metier":           tags.get("metier", ""),
@@ -236,5 +249,21 @@ def scrape_jobs(url=None, max_pages=115) -> list[dict]:
 
     if len(jobs) < total_jobs * 0.7:
         raise ScrapingError(f"Scraping incomplet ({len(jobs)}/{total_jobs})")
+
+    # DEBUG IDs
+    ids = sorted([j["id"] for j in jobs])
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"ids_{timestamp}.txt"
+    with open(filename, "w") as f:
+        for _id in ids:
+            f.write(f"{_id}\n")
+    print(f"[DEBUG] IDs sauvegardés dans {filename}")
+
+    # DEBUG stabilité pages
+    filename_pages = f"pages_{timestamp}.txt"
+    with open(filename_pages, "w") as f:
+        for p, count in page_stats:
+            f.write(f"{p}:{count}\n")
+    print(f"[DEBUG] Pages stats sauvegardées dans {filename_pages}")
 
     return jobs

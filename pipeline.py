@@ -114,7 +114,7 @@ def run_pipeline():
 
         for i, job in enumerate(new_jobs, 1):
             print(f"   [{i}/{len(new_jobs)}] {job['title'][:60]}")
-            notify("\n🚫 Étape 2 — Filtre métier/contrat...")
+            #notify("\n🚫 Étape 2 — Filtre métier/contrat...")
 
             if job.get("metier","") in EXCLUDED_METIERS:
                 mark_rejected(job["id"], "metier_exclu", f"Métier exclu : {job.get('metier','')}")

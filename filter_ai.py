@@ -9,6 +9,18 @@ from tqdm import tqdm
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
+# ─────────────────────────
+# TELEGRAM (AJOUT UNIQUEMENT)
+# ─────────────────────────
+def notify(msg):
+    print(msg)
+    try:
+        from notifier import send_telegram
+        send_telegram(msg)
+    except Exception as e:
+        print(f"(Telegram failed: {e})")
+# ─────────────────────────
+
 PASS_KEYWORDS = [
     "bac+5", "bac + 5", "diplôme d'ingénieur", "diplome d'ingenieur",
     "école d'ingénieur", "ecole d'ingenieur", "ingénieur ou", "ingénieur et",
@@ -155,6 +167,16 @@ def run_filter_1(limit: int = None):
     total = len(jobs)
     print(f"\n🤖 Filtre IA étape 1 — {total} offres à analyser...")
 
+    # ─────────────────────────
+    # TELEGRAM START (AJOUT)
+    # ─────────────────────────
+    notify(f"""🚫 Étape 2 — Filtre IA en cours...
+
+📊 {total} offres à analyser
+""")
+    start_time = time.time()
+    # ─────────────────────────
+
     passed = rejected = errors = auto_passed = 0
 
     for i, job in enumerate(tqdm(jobs, desc="Filtre IA"), 1):
@@ -263,6 +285,23 @@ def run_filter_1(limit: int = None):
     print(f"   ✅ Passées (LLM) : {passed}")
     print(f"   ❌ Rejetées      : {rejected}")
     print(f"   ⚠️  Erreurs       : {errors}")
+
+    # ─────────────────────────
+    # TELEGRAM END (AJOUT)
+    # ─────────────────────────
+    elapsed = int(time.time() - start_time)
+    kept = passed + auto_passed
+    ratio = (kept / total * 100) if total else 0
+
+    notify(f"""🚫 Filtrage APHP terminé
+
+📊 {total} → {kept} offres ({ratio:.1f}%)
+❌ {rejected} rejetées
+⚠️ {errors} erreurs
+
+⏱️ {elapsed}s
+""")
+    # ─────────────────────────
 
 if __name__ == "__main__":
     run_filter_1()
