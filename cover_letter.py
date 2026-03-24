@@ -64,7 +64,7 @@ Profils disponibles :
 Réponds avec un seul mot."""
 
     response = client.chat.completions.create(
-        model="moonshotai/kimi-k2",
+        model="moonshotai/kimi-k2-instruct-0905",
         max_tokens=10,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -100,7 +100,7 @@ CONSIGNES :
 Génère uniquement la lettre, sans commentaire."""
 
     response = client.chat.completions.create(
-        model="moonshotai/kimi-k2",
+        model="moonshotai/kimi-k2-instruct-0905",
         max_tokens=800,
         messages=[{"role": "user", "content": prompt}]
     )

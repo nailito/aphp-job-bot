@@ -5,3 +5,4 @@ pandas
 groq
 requests
 tqdm
+plotly
