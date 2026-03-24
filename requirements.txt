@@ -6,3 +6,4 @@ groq
 requests
 tqdm
 plotly
+fpdf2
