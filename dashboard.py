@@ -220,11 +220,9 @@ if page == "📊 Tableau de bord":
 elif page == "🚀 À postuler":
     st.title("🚀 Offres à postuler")
 
-    from database import get_feedbacks, get_application, save_application
-    from cover_letter import select_cv_base, generate_cover_letter, adapt_cv
-    import json
-
+    from database import get_feedbacks
     feedbacks = get_feedbacks()
+
     feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
     df_postuler = df_active[df_active["id"].isin(feedbacks_positifs)].copy()
 
@@ -244,13 +242,10 @@ elif page == "🚀 À postuler":
     with col_left:
         st.subheader(f"📋 {len(df_postuler)} offres")
         for _, row in df_postuler.iterrows():
-            job_id  = row["id"]
-            score   = int(row["score"]) if pd.notna(row["score"]) else "–"
-            app     = get_application(job_id)
-            status  = app["status"] if app else "draft"
-            status_emoji = {"draft": "📝", "ready": "✅", "applied": "🚀"}.get(status, "📝")
-            decision_emoji = "⭐" if job_id in {f["job_id"] for f in feedbacks if f["decision"] == "⭐"} else "👍"
-            label = f"{status_emoji} {decision_emoji} {row['title'][:35]}... ({score}/100)"
+            job_id = row["id"]
+            score  = int(row["score"]) if pd.notna(row["score"]) else "–"
+            dec_emoji = "⭐" if job_id in {f["job_id"] for f in feedbacks if f["decision"] == "⭐"} else "👍"
+            label  = f"{dec_emoji} {row['title'][:35]}... ({score}/100)"
             active = job_id == st.session_state.selected_job_apply
             if st.button(label, key=f"apply_{job_id}", use_container_width=True,
                          type="primary" if active else "secondary"):
@@ -259,13 +254,12 @@ elif page == "🚀 À postuler":
 
     # ── COLONNE DROITE — détail
     with col_right:
-        job = df_postuler[df_postuler["id"] == st.session_state.selected_job_apply].iloc[0]
+        job    = df_postuler[df_postuler["id"] == st.session_state.selected_job_apply].iloc[0]
         job_id = job["id"]
-        app = get_application(job_id) or {}
 
-        # ── Infos offre
         st.subheader(job["title"])
         st.markdown(f"**🏥 {job['hopital']}** · 📍 {job['location']} · 📄 {job['contrat']}")
+
         score = int(job["score"]) if pd.notna(job["score"]) else "–"
         col_s, col_p = st.columns(2)
         col_s.metric("Score", f"{score}/100")
@@ -275,6 +269,7 @@ elif page == "🚀 À postuler":
             with st.expander("🧠 Analyse IA"):
                 st.write(job["score_raison"])
                 try:
+                    import json
                     pf = json.loads(job.get("score_points_forts") or "[]")
                     pp = json.loads(job.get("score_points_faibles") or "[]")
                     if pf:
@@ -284,182 +279,12 @@ elif page == "🚀 À postuler":
                 except Exception:
                     pass
 
-        st.link_button("🔗 Voir l'offre APHP", job["url"])
         st.divider()
 
-        # ══════════════════════════════════
-        # 📄 LETTRE DE MOTIVATION
-        # ══════════════════════════════════
-        st.markdown("### 📄 Lettre de motivation")
-
-        lm_validated = app.get("lm_validated", False)
-        lm_text      = app.get("lm_text", "")
-
-        col_gen_lm, col_valid_lm = st.columns([2, 1])
-
-        with col_gen_lm:
-            if st.button("🤖 Générer LM avec l'IA", key=f"gen_lm_{job_id}",
-                         use_container_width=True, disabled=lm_validated):
-                with st.spinner("Génération en cours (kimi-k2)..."):
-                    try:
-                        _, cv_text = select_cv_base(job["title"], str(job.get("description", "")))
-                        lm = generate_cover_letter(
-                            job["title"],
-                            str(job.get("description", "")),
-                            job["hopital"],
-                            cv_text
-                        )
-                        save_application(job_id, lm_text=lm, lm_validated=False)
-                        st.session_state[f"lm_text_{job_id}"] = lm
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erreur génération : {e}")
-
-        with col_valid_lm:
-            if lm_validated:
-                if st.button("🔓 Modifier LM", key=f"unlock_lm_{job_id}", use_container_width=True):
-                    save_application(job_id, lm_validated=False)
-                    st.rerun()
-            else:
-                if st.button("✅ Valider LM", key=f"valid_lm_{job_id}",
-                             use_container_width=True,
-                             disabled=not (lm_text or st.session_state.get(f"lm_text_{job_id}"))):
-                    current = st.session_state.get(f"lm_text_{job_id}", lm_text)
-                    save_application(job_id, lm_text=current, lm_validated=True)
-                    st.rerun()
-
-        current_lm = st.session_state.get(f"lm_text_{job_id}", lm_text)
-        if current_lm:
-            edited_lm = st.text_area(
-                "Lettre de motivation",
-                value=current_lm,
-                height=300,
-                disabled=lm_validated,
-                key=f"lm_area_{job_id}",
-                label_visibility="collapsed"
-            )
-            if not lm_validated:
-                st.session_state[f"lm_text_{job_id}"] = edited_lm
-
-            from cover_letter import text_to_pdf
-            pdf_bytes = text_to_pdf(current_lm, is_lm=True)
-            st.download_button(
-                label="📥 Télécharger LM (txt)",
-                data=pdf_bytes,
-                file_name=f"LM_{job_id}.txt",
-                mime="application/txt",
-                key=f"dl_lm_{job_id}"
-            )
-        else:
-            st.caption("Clique sur **Générer LM** pour créer une lettre adaptée à cette offre.")
-
-        st.divider()
-
-        # ══════════════════════════════════
-        # 📋 CV ADAPTÉ
-        # ══════════════════════════════════
-        st.markdown("### 📋 CV adapté")
-
-        cv_validated = app.get("cv_validated", False)
-        cv_text      = app.get("cv_adapted_text", "")
-        cv_base_used = app.get("cv_base_used", "")
-
-        col_gen_cv, col_valid_cv = st.columns([2, 1])
-
-        with col_gen_cv:
-            if st.button("🤖 Générer CV adapté avec l'IA", key=f"gen_cv_{job_id}",
-                         use_container_width=True, disabled=cv_validated):
-                with st.spinner("Sélection du CV de base + adaptation (kimi-k2)..."):
-                    try:
-                        base_name, base_text = select_cv_base(
-                            job["title"], str(job.get("description", ""))
-                        )
-                        adapted = adapt_cv(
-                            job["title"],
-                            str(job.get("description", "")),
-                            base_text
-                        )
-                        save_application(job_id,
-                                         cv_base_used=base_name,
-                                         cv_adapted_text=adapted,
-                                         cv_validated=False)
-                        st.session_state[f"cv_text_{job_id}"] = adapted
-                        st.session_state[f"cv_base_{job_id}"] = base_name
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erreur génération : {e}")
-
-        with col_valid_cv:
-            if cv_validated:
-                if st.button("🔓 Modifier CV", key=f"unlock_cv_{job_id}", use_container_width=True):
-                    save_application(job_id, cv_validated=False)
-                    st.rerun()
-            else:
-                if st.button("✅ Valider CV", key=f"valid_cv_{job_id}",
-                             use_container_width=True,
-                             disabled=not (cv_text or st.session_state.get(f"cv_text_{job_id}"))):
-                    current = st.session_state.get(f"cv_text_{job_id}", cv_text)
-                    save_application(job_id, cv_adapted_text=current, cv_validated=True)
-                    st.rerun()
-
-        base_display = st.session_state.get(f"cv_base_{job_id}", cv_base_used)
-        if base_display:
-            labels = {"data": "Analyste de données", "organisation": "Ingénieur en Organisation", "ro": "Ingénieur R.O."}
-            st.caption(f"📎 CV de base sélectionné : **{labels.get(base_display, base_display)}**")
-
-        current_cv = st.session_state.get(f"cv_text_{job_id}", cv_text)
-        if current_cv:
-            edited_cv = st.text_area(
-                "CV adapté",
-                value=current_cv,
-                height=300,
-                disabled=cv_validated,
-                key=f"cv_area_{job_id}",
-                label_visibility="collapsed"
-            )
-            if not cv_validated:
-                st.session_state[f"cv_text_{job_id}"] = edited_cv
-
-            from cover_letter import text_to_pdf
-            pdf_bytes = text_to_pdf(current_cv, is_lm=False)
-            st.download_button(
-                label="📥 Télécharger CV (txt)",
-                data=pdf_bytes,
-                file_name=f"CV_{job_id}.txt",
-                mime="application/txt",
-                key=f"dl_cv_{job_id}"
-            )
-        else:
-            st.caption("Clique sur **Générer CV adapté** pour obtenir un CV ciblé sur ce poste.")
-
-        st.divider()
-
-        # ══════════════════════════════════
-        # 🚀 ACTIONS FINALES
-        # ══════════════════════════════════
-        both_validated = lm_validated and cv_validated
-        status = app.get("status", "draft")
-
-        col_a, col_b, col_c = st.columns(3)
-
+        col_a, col_b = st.columns(2)
         with col_a:
-            if status == "applied":
-                st.success("🚀 Candidature envoyée !")
-            else:
-                if st.button(
-                    "🚀 Postuler",
-                    key=f"postuler_{job_id}",
-                    use_container_width=True,
-                    type="primary",
-                    disabled=not both_validated,
-                    help="Valide LM et CV avant de postuler" if not both_validated else ""
-                ):
-                    # Pour l'instant → ouvre le site APHP
-                    st.link_button("🔗 Postuler sur APHP →", job["url"])
-                    save_application(job_id, status="applied",
-                                     applied_at=datetime.now().isoformat())
-                    st.rerun()
-
+            st.link_button("🚀 Postuler sur APHP →", job["url"],
+                           use_container_width=True, type="primary")
         with col_b:
             if st.button("❌ Retirer", key=f"retirer_{job_id}", use_container_width=True):
                 with get_connection() as conn:
@@ -469,15 +294,6 @@ elif page == "🚀 À postuler":
                 st.success("Offre retirée.")
                 st.cache_data.clear()
                 st.rerun()
-
-        with col_c:
-            if both_validated and status != "applied":
-                st.info("✅ Prêt à postuler !")
-            elif not both_validated:
-                missing = []
-                if not lm_validated: missing.append("LM")
-                if not cv_validated:  missing.append("CV")
-                st.warning(f"En attente : {' + '.join(missing)}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📰 Rapport du jour":
