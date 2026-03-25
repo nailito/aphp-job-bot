@@ -370,50 +370,50 @@ elif page == "📰 Rapport du jour":
                                        "Titre": st.column_config.TextColumn(width="large")})
 
             with tab3:
-    df_s = df_nouvelles[df_nouvelles["score"].notna()].sort_values("score", ascending=False)
-    if df_s.empty:
-        st.info("Aucune offre scorée.")
-    else:
-        for _, row in df_s.iterrows():
-            score = int(row["score"]) if pd.notna(row["score"]) else "–"
-            prio  = row.get("priorite", "–")
-            emoji = "🟢" if score >= 80 else "🟡" if score >= 60 else "🔴"
+                df_s = df_nouvelles[df_nouvelles["score"].notna()].sort_values("score", ascending=False)
+                if df_s.empty:
+                    st.info("Aucune offre scorée.")
+                else:
+                    for _, row in df_s.iterrows():
+                        score = int(row["score"]) if pd.notna(row["score"]) else "–"
+                        prio  = row.get("priorite", "–")
+                        emoji = "🟢" if score >= 80 else "🟡" if score >= 60 else "🔴"
 
-            with st.expander(f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {row['hopital']}"):
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Score", f"{score}/100")
-                col2.metric("Priorité", prio)
-                col3.metric("Contrat", row.get("contrat", "–"))
+                        with st.expander(f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {row['hopital']}"):
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Score", f"{score}/100")
+                            col2.metric("Priorité", prio)
+                            col3.metric("Contrat", row.get("contrat", "–"))
 
-                st.markdown(f"**📍 Lieu :** {row.get('location', '–')} | **🖥 Télétravail :** {row.get('teletravail', '–')}")
-                st.markdown(f"**🏥 Filière :** {row.get('filiere', '–')} | **💼 Métier :** {row.get('metier', '–')}")
+                            st.markdown(f"**📍 Lieu :** {row.get('location', '–')} | **🖥 Télétravail :** {row.get('teletravail', '–')}")
+                            st.markdown(f"**🏥 Filière :** {row.get('filiere', '–')} | **💼 Métier :** {row.get('metier', '–')}")
 
-                st.divider()
+                            st.divider()
 
-                if pd.notna(row.get("score_raison")):
-                    st.markdown(f"**🧠 Analyse IA :**")
-                    st.info(row["score_raison"])
+                            if pd.notna(row.get("score_raison")):
+                                st.markdown(f"**🧠 Analyse IA :**")
+                                st.info(row["score_raison"])
 
-                try:
-                    import json
-                    pf = json.loads(row.get("score_points_forts") or "[]")
-                    pp = json.loads(row.get("score_points_faibles") or "[]")
-                    col_pf, col_pp = st.columns(2)
-                    with col_pf:
-                        if pf:
-                            st.markdown("**✅ Points forts**")
-                            for p in pf:
-                                st.markdown(f"- {p}")
-                    with col_pp:
-                        if pp:
-                            st.markdown("**⚠️ Points faibles**")
-                            for p in pp:
-                                st.markdown(f"- {p}")
-                except Exception:
-                    pass
+                            try:
+                                import json
+                                pf = json.loads(row.get("score_points_forts") or "[]")
+                                pp = json.loads(row.get("score_points_faibles") or "[]")
+                                col_pf, col_pp = st.columns(2)
+                                with col_pf:
+                                    if pf:
+                                        st.markdown("**✅ Points forts**")
+                                        for p in pf:
+                                            st.markdown(f"- {p}")
+                                with col_pp:
+                                    if pp:
+                                        st.markdown("**⚠️ Points faibles**")
+                                        for p in pp:
+                                            st.markdown(f"- {p}")
+                            except Exception:
+                                pass
 
-                st.divider()
-                st.link_button("🔗 Voir l'offre sur APHP →", row["url"], use_container_width=True, type="primary")
+                            st.divider()
+                            st.link_button("🔗 Voir l'offre sur APHP →", row["url"], use_container_width=True, type="primary")
 
         st.divider()
         st.subheader("📈 Historique des runs")
