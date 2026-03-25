@@ -4,6 +4,7 @@ import time
 import os
 import psycopg2
 from groq import Groq
+from datetime import datetime
 from config import GROQ_API_KEY, PROFILE_FACTUEL, PROFILE_MOTIVATIONNEL
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -64,12 +65,14 @@ def save_score(job_id: str, score: int, priorite: str,
             cur.execute("""
                 UPDATE jobs
                 SET score=%s, priorite=%s, score_raison=%s,
-                    score_points_forts=%s, score_points_faibles=%s
+                    score_points_forts=%s, score_points_faibles=%s,
+                    scored_at=%s
                 WHERE id=%s
             """, (score, priorite, raison,
-                  json.dumps(points_forts, ensure_ascii=False),
-                  json.dumps(points_faibles, ensure_ascii=False),
-                  job_id))
+                json.dumps(points_forts, ensure_ascii=False),
+                json.dumps(points_faibles, ensure_ascii=False),
+                datetime.now().isoformat(),
+                job_id))
             if score < 50:
                 cur.execute("""
                     UPDATE jobs SET rejection_category = 'profil_inadequat',

@@ -2,7 +2,7 @@ import streamlit as st
 import psycopg2
 import os
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from config import EXCLUDED_METIERS
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -28,13 +28,14 @@ def load_data():
                contrat, teletravail, date_publication, url, score,
                priorite, score_raison, score_points_forts, score_points_faibles,
                mots_cles_matches, raison, rejection_category, description,
-               rejection_reason, first_seen, last_seen, status
+               rejection_reason, first_seen, last_seen, status, scored_at
         FROM jobs
     """, conn)
     conn.close()
     df = df.drop_duplicates(subset="id")
     df["date_publication"] = pd.to_datetime(df["date_publication"], errors="coerce")
     df["first_seen"]       = pd.to_datetime(df["first_seen"],       errors="coerce")
+    df["scored_at"]        = pd.to_datetime(df["scored_at"],        errors="coerce")
     return df
 
 try:
@@ -100,25 +101,26 @@ if page == "📊 Tableau de bord":
     else:
         st.warning("⚠️ Aucun pipeline exécuté pour l'instant.")
 
+    # ── Alerte pipeline en retard
     if not runs.empty:
-        from datetime import timezone
         last_run_dt = pd.to_datetime(runs.iloc[0]["run_date"])
         if last_run_dt.tzinfo is None:
             last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
         delta = datetime.now(timezone.utc) - last_run_dt
-        if delta.total_seconds() > 26 * 3600:  # 26h pour tolérer un léger retard
+        if delta.total_seconds() > 26 * 3600:
             st.error(f"🚨 Pipeline en retard — dernier run il y a **{int(delta.total_seconds()//3600)}h**. Vérifie GitHub Actions.")
 
     st.divider()
 
-    # ── Meilleure offre évaluée
-    from database import get_feedbacks
-    feedbacks = get_feedbacks()
-    feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
-
+    # ── Offres déjà postulées à exclure
     with get_connection() as conn:
         df_already_applied = pd.read_sql("SELECT job_id FROM applications", conn)
     already_applied_ids = set(df_already_applied["job_id"].tolist())
+
+    # ── Meilleure offre évaluée (hors déjà postulées)
+    from database import get_feedbacks
+    feedbacks = get_feedbacks()
+    feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
 
     df_top = df_active[
         (df_active["id"].isin(feedbacks_positifs)) &
@@ -135,7 +137,7 @@ if page == "📊 Tableau de bord":
         with col_card:
             score_val = int(best["score"]) if pd.notna(best["score"]) else "–"
             prio = best.get("priorite", "–")
-            date_pub = best['date_publication'].strftime('%d/%m/%Y') if pd.notna(best.get('date_publication')) else '–'
+            date_pub = best["date_publication"].strftime("%d/%m/%Y") if pd.notna(best.get("date_publication")) else "–"
             st.markdown(f"""
             <div style="
                 background:#f0f9ff;
@@ -177,7 +179,6 @@ if page == "📊 Tableau de bord":
         ~df_active["id"].isin(already_applied_ids)
     ])
 
-    col_ev, col_pos = st.columns(2)
     if "nav" not in st.session_state:
         st.session_state.nav = "📊 Tableau de bord"
 
@@ -235,13 +236,15 @@ if page == "📊 Tableau de bord":
     st.plotly_chart(fig, use_container_width=True)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
 elif page == "🚀 À postuler":
     st.title("🚀 Offres à postuler")
 
     from database import get_feedbacks
     feedbacks = get_feedbacks()
-
     feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
+
+    # Exclure les offres déjà en candidature
     with get_connection() as conn:
         df_already_applied = pd.read_sql("SELECT job_id FROM applications", conn)
     already_applied_ids = set(df_already_applied["job_id"].tolist())
@@ -286,9 +289,9 @@ elif page == "🚀 À postuler":
         st.markdown(f"**🏥 {job['hopital']}** · 📍 {job['location']} · 📄 {job['contrat']}")
 
         score = int(job["score"]) if pd.notna(job["score"]) else "–"
+        date_pub = job["date_publication"].strftime("%d/%m/%Y") if pd.notna(job.get("date_publication")) else "–"
         col_s, col_p = st.columns(2)
         col_s.metric("Score", f"{score}/100")
-        date_pub = job["date_publication"].strftime("%d/%m/%Y") if pd.notna(job.get("date_publication")) else "–"
         col_p.metric("Publiée le", date_pub)
 
         if pd.notna(job.get("score_raison")):
@@ -306,10 +309,134 @@ elif page == "🚀 À postuler":
                     pass
 
         st.divider()
-
-        col_a, col_b = st.columns(2)
         st.link_button("🚀 Postuler sur APHP →", job["url"],
-               use_container_width=True, type="primary")
+                       use_container_width=True, type="primary")
+
+# ══════════════════════════════════════════════════════════════════════════════
+elif page == "📨 Mes candidatures":
+    st.title("📨 Mes candidatures")
+
+    STATUTS = ["👀 En cours d'examen", "📞 Entretien planifié", "✅ Offre reçue", "❌ Refusée"]
+
+    # ── Ajouter une candidature
+    with st.expander("➕ Ajouter une candidature", expanded=False):
+        from database import get_feedbacks
+        feedbacks = get_feedbacks()
+        feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
+        df_eligible = df_active[df_active["id"].isin(feedbacks_positifs)].copy()
+
+        with get_connection() as conn:
+            df_apps_check = pd.read_sql("SELECT job_id FROM applications", conn)
+        already_applied = set(df_apps_check["job_id"].tolist())
+        df_eligible = df_eligible[~df_eligible["id"].isin(already_applied)]
+
+        if df_eligible.empty:
+            st.info("Toutes tes offres évaluées positivement ont déjà une candidature.")
+        else:
+            df_eligible["label"] = df_eligible.apply(
+                lambda r: f"{r['title']} — {r['hopital']}", axis=1
+            )
+            choix = st.selectbox("Sélectionne l'offre", df_eligible["label"].tolist())
+            job_row = df_eligible[df_eligible["label"] == choix].iloc[0]
+
+            col1, col2 = st.columns(2)
+            statut_new    = col1.selectbox("Statut initial", STATUTS)
+            date_cand_new = col2.date_input("Date de candidature", value=datetime.now().date())
+            notes_new     = st.text_area("Notes", placeholder="Ex: Candidature envoyée via RH, contact : dupont@aphp.fr", height=80)
+
+            if st.button("💾 Enregistrer la candidature", use_container_width=True, type="primary"):
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            INSERT INTO applications (job_id, statut, date_candidature, notes)
+                            VALUES (%s, %s, %s, %s)
+                        """, (job_row["id"], statut_new, date_cand_new, notes_new))
+                    conn.commit()
+                st.success("✅ Candidature enregistrée !")
+                st.cache_data.clear()
+                st.rerun()
+
+    st.divider()
+
+    # ── Liste des candidatures
+    with get_connection() as conn:
+        df_apps = pd.read_sql("""
+            SELECT a.id as app_id, a.job_id, a.statut, a.date_candidature, a.notes, a.updated_at,
+                   j.title, j.hopital, j.location, j.contrat, j.url, j.score, j.date_publication
+            FROM applications a
+            JOIN jobs j ON a.job_id = j.id
+            ORDER BY a.date_candidature DESC NULLS LAST
+        """, conn)
+
+    if df_apps.empty:
+        st.info("Aucune candidature enregistrée pour l'instant.")
+        st.stop()
+
+    # ── Compteurs par statut
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("👀 En cours", len(df_apps[df_apps["statut"] == "👀 En cours d'examen"]))
+    col2.metric("📞 Entretien", len(df_apps[df_apps["statut"] == "📞 Entretien planifié"]))
+    col3.metric("✅ Offre reçue", len(df_apps[df_apps["statut"] == "✅ Offre reçue"]))
+    col4.metric("❌ Refusée", len(df_apps[df_apps["statut"] == "❌ Refusée"]))
+
+    st.divider()
+
+    for _, row in df_apps.iterrows():
+        score = int(row["score"]) if pd.notna(row.get("score")) else "–"
+        with st.expander(f"{row['statut']} — **{row['title']}** — {row['hopital']}"):
+            date_pub = str(row["date_publication"])[:10] if pd.notna(row.get("date_publication")) else "–"
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Score", f"{score}/100")
+            col2.metric("Publiée le", date_pub)
+            col3.metric("Candidature", str(row["date_candidature"])[:10] if pd.notna(row.get("date_candidature")) else "–")
+
+            st.markdown(f"**📍 {row['location']}** | **📄 {row['contrat']}**")
+
+            if pd.notna(row.get("notes")) and row["notes"]:
+                st.markdown(f"**📝 Notes :** {row['notes']}")
+
+            st.divider()
+
+            col_statut, col_notes = st.columns([1, 2])
+            with col_statut:
+                nouveau_statut = st.selectbox(
+                    "Changer le statut",
+                    STATUTS,
+                    index=STATUTS.index(row["statut"]) if row["statut"] in STATUTS else 0,
+                    key=f"statut_{row['app_id']}"
+                )
+            with col_notes:
+                nouvelles_notes = st.text_area(
+                    "Mettre à jour les notes",
+                    value=row["notes"] or "",
+                    height=80,
+                    key=f"notes_{row['app_id']}"
+                )
+
+            col_save, col_del, col_link = st.columns(3)
+            with col_save:
+                if st.button("💾 Sauvegarder", key=f"save_app_{row['app_id']}", use_container_width=True):
+                    with get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                UPDATE applications
+                                SET statut = %s, notes = %s, updated_at = NOW()
+                                WHERE id = %s
+                            """, (nouveau_statut, nouvelles_notes, row["app_id"]))
+                        conn.commit()
+                    st.success("✅ Mis à jour !")
+                    st.cache_data.clear()
+                    st.rerun()
+            with col_del:
+                if st.button("🗑️ Supprimer", key=f"del_app_{row['app_id']}", use_container_width=True):
+                    with get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("DELETE FROM applications WHERE id = %s", (row["app_id"],))
+                        conn.commit()
+                    st.cache_data.clear()
+                    st.rerun()
+            with col_link:
+                st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📰 Rapport du jour":
@@ -361,13 +488,14 @@ elif page == "📰 Rapport du jour":
                     for _, row in df_p.iterrows():
                         score = int(row["score"]) if pd.notna(row.get("score")) else "–"
                         prio  = row.get("priorite", "–")
+                        date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                         emoji = "🟢" if isinstance(score, int) and score >= 80 else "🟡" if isinstance(score, int) and score >= 60 else "⚪"
 
                         with st.expander(f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {row['hopital']}"):
                             col1, col2, col3 = st.columns(3)
                             col1.metric("Score", f"{score}/100" if score != "–" else "–")
                             col2.metric("Priorité", prio)
-                            col3.metric("Contrat", row.get("contrat", "–"))
+                            col3.metric("Publiée le", date_pub)
 
                             st.markdown(f"**📍 Lieu :** {row.get('location','–')} | **🖥 Télétravail :** {row.get('teletravail','–')}")
                             st.markdown(f"**🏥 Filière :** {row.get('filiere','–')} | **💼 Métier :** {row.get('metier','–')}")
@@ -405,17 +533,16 @@ elif page == "📰 Rapport du jour":
                     st.info("Aucune offre rejetée.")
                 else:
                     for _, row in df_r.iterrows():
-                        cat   = CATEGORY_LABELS.get(row.get("rejection_category",""), row.get("rejection_category",""))
+                        cat    = CATEGORY_LABELS.get(row.get("rejection_category",""), row.get("rejection_category",""))
                         raison = row.get("rejection_reason") or row.get("raison") or "–"
+                        date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
 
                         with st.expander(f"❌ **{row['title']}** — {row['hopital']}"):
                             st.markdown(f"**💼 Métier :** {row.get('metier','–')} | **🏥 Filière :** {row.get('filiere','–')}")
-                            st.markdown(f"**📍 Lieu :** {row.get('location','–')} | **📄 Contrat :** {row.get('contrat','–')}")
-
+                            st.markdown(f"**📍 Lieu :** {row.get('location','–')} | **📄 Contrat :** {row.get('contrat','–')} | **📅 Publiée le :** {date_pub}")
                             st.divider()
                             st.markdown(f"**Catégorie de rejet :** `{cat}`")
                             st.markdown(f"**Raison :** {raison}")
-
                             st.divider()
                             st.link_button("🔗 Voir l'offre sur APHP →", row["url"], use_container_width=True, type="primary")
 
@@ -427,22 +554,22 @@ elif page == "📰 Rapport du jour":
                     for _, row in df_s.iterrows():
                         score = int(row["score"]) if pd.notna(row["score"]) else "–"
                         prio  = row.get("priorite", "–")
+                        date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                         emoji = "🟢" if score >= 80 else "🟡" if score >= 60 else "🔴"
 
                         with st.expander(f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {row['hopital']}"):
                             col1, col2, col3 = st.columns(3)
                             col1.metric("Score", f"{score}/100")
-                            date_pub = str(row["date_publication"])[:10] if pd.notna(row.get("date_publication")) else "–"
-                            col2.metric("Publiée le", date_pub)
-                            col3.metric("Contrat", row.get("contrat", "–"))
+                            col2.metric("Priorité", prio)
+                            col3.metric("Publiée le", date_pub)
 
-                            st.markdown(f"**📍 Lieu :** {row.get('location', '–')} | **🖥 Télétravail :** {row.get('teletravail', '–')}")
-                            st.markdown(f"**🏥 Filière :** {row.get('filiere', '–')} | **💼 Métier :** {row.get('metier', '–')}")
+                            st.markdown(f"**📍 Lieu :** {row.get('location','–')} | **🖥 Télétravail :** {row.get('teletravail','–')}")
+                            st.markdown(f"**🏥 Filière :** {row.get('filiere','–')} | **💼 Métier :** {row.get('metier','–')}")
 
                             st.divider()
 
                             if pd.notna(row.get("score_raison")):
-                                st.markdown(f"**🧠 Analyse IA :**")
+                                st.markdown("**🧠 Analyse IA :**")
                                 st.info(row["score_raison"])
 
                             try:
@@ -453,13 +580,11 @@ elif page == "📰 Rapport du jour":
                                 with col_pf:
                                     if pf:
                                         st.markdown("**✅ Points forts**")
-                                        for p in pf:
-                                            st.markdown(f"- {p}")
+                                        for p in pf: st.markdown(f"- {p}")
                                 with col_pp:
                                     if pp:
                                         st.markdown("**⚠️ Points faibles**")
-                                        for p in pp:
-                                            st.markdown(f"- {p}")
+                                        for p in pp: st.markdown(f"- {p}")
                             except Exception:
                                 pass
 
@@ -480,7 +605,7 @@ elif page == "📰 Rapport du jour":
         import requests
         gh_token = os.getenv("GH_WORKFLOW_TOKEN", "")
         if not gh_token:
-            st.error("❌ Secret GH_WORKFLOW_TOKEN manquant.")
+            st.error("❌ Secret GH_WORKFLOW_TOKEN manquant dans les variables d'environnement Streamlit.")
         else:
             resp = requests.post(
                 "https://api.github.com/repos/nailito/aphp-job-bot/actions/workflows/daily.yml/dispatches",
@@ -491,7 +616,7 @@ elif page == "📰 Rapport du jour":
                 json={"ref": "main"},
             )
             if resp.status_code == 204:
-                st.success("✅ Pipeline déclenché ! Résultats dans ~10 minutes.")
+                st.success("✅ Pipeline déclenché ! Résultats dans ~10 minutes sur l'onglet Actions GitHub.")
             else:
                 st.error(f"❌ Erreur GitHub API : {resp.status_code} — {resp.text}")
 
@@ -612,6 +737,10 @@ elif page == "❌ Offres refusées par score":
                 col_prio.metric("Priorité", row.get("priorite", "–"))
                 st.markdown(f"**Raison du refus :** {row.get('score_raison', '–')}")
 
+                # Date de scoring
+                if pd.notna(row.get("scored_at")):
+                    st.caption(f"🕐 Scorée le {str(row['scored_at'])[:16].replace('T', ' à ')}")
+
                 if pd.notna(row.get("score_points_faibles")):
                     try:
                         import json
@@ -633,7 +762,8 @@ elif page == "❌ Offres refusées par score":
                                     score = NULL, priorite = NULL,
                                     score_raison = NULL,
                                     score_points_forts = NULL,
-                                    score_points_faibles = NULL
+                                    score_points_faibles = NULL,
+                                    scored_at = NULL
                                 WHERE id = %s
                             """, (row["id"],))
                         conn.commit()
@@ -692,6 +822,10 @@ elif page == "📝 À évaluer":
 
                     date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                     st.markdown(f"**📅 Publiée le :** {date_pub}")
+
+                    if pd.notna(row.get("scored_at")):
+                        st.caption(f"🕐 Scorée le {str(row['scored_at'])[:16].replace('T', ' à ')}")
+
                     st.link_button("Voir l'offre →", row["url"])
 
                     if st.button("✨ Générer résumé", key=f"resume_{job_key}"):
@@ -758,7 +892,6 @@ Description : {str(row.get('description', ''))[:1500]}
         if df_deja_evalues.empty:
             st.info("Aucun feedback encore.")
         else:
-            # On joint avec feedbacks pour récupérer decision/commentaire
             feedback_map = {f["job_id"]: f for f in get_feedbacks()}
 
             for _, row in df_deja_evalues.iterrows():
@@ -767,7 +900,7 @@ Description : {str(row.get('description', ''))[:1500]}
                 with st.expander(f"{f.get('decision','?')} **{row['title']}** — {row['hopital']}"):
                     st.markdown(f"**Feedback :** {f.get('commentaire','–')}")
                     st.markdown(f"**Date :** {f.get('created_at','')[:10]}")
-                    
+
                     col1, col2 = st.columns(2)
                     with col1:
                         st.link_button("Voir l'offre →", row["url"])
@@ -804,10 +937,10 @@ elif page == "🗑️ Offres retirées du site":
 
         for _, row in df_removed.iterrows():
             score = row.get("score")
-            passed_ia = pd.notna(score) and float(score) >= 50
-            evaluated = row["id"] in feedback_map
+            passed_ia  = pd.notna(score) and float(score) >= 50
+            evaluated  = row["id"] in feedback_map
 
-            ia_badge  = "✅ Passée IA" if passed_ia else "❌ Non passée IA"
+            ia_badge   = "✅ Passée IA" if passed_ia else "❌ Non passée IA"
             eval_badge = f"{feedback_map[row['id']]['decision']} Évaluée" if evaluated else "⬜ Non évaluée"
 
             with st.expander(f"🗑️ **{row['title']}** — {row['hopital']} | {ia_badge} | {eval_badge}"):
@@ -838,137 +971,3 @@ elif page == "⚙️  Config":
     fil = df_active["filiere"].value_counts().reset_index()
     fil.columns = ["Filière","Offres"]
     st.dataframe(fil, use_container_width=True, hide_index=True)
-
-
-elif page == "📨 Mes candidatures":
-    st.title("📨 Mes candidatures")
-
-    STATUTS = ["👀 En cours d'examen", "📞 Entretien planifié", "✅ Offre reçue", "❌ Refusée"]
-
-    # ── Ajouter une candidature
-    with st.expander("➕ Ajouter une candidature", expanded=False):
-        # Offres éligibles : évaluées positivement
-        from database import get_feedbacks
-        feedbacks = get_feedbacks()
-        feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
-        df_eligible = df_active[df_active["id"].isin(feedbacks_positifs)].copy()
-
-        # Exclure celles déjà en candidature
-        with get_connection() as conn:
-            df_apps = pd.read_sql("""
-                SELECT a.id as app_id, a.job_id, a.statut, a.date_candidature, a.notes, a.updated_at,
-                    j.title, j.hopital, j.location, j.contrat, j.url, j.score, j.date_publication
-                FROM applications a
-                JOIN jobs j ON a.job_id = j.id
-                ORDER BY a.date_candidature DESC NULLS LAST
-            """, conn)
-        already_applied = set(df_apps["job_id"].tolist())
-        df_eligible = df_eligible[~df_eligible["id"].isin(already_applied)]
-
-        if df_eligible.empty:
-            st.info("Toutes tes offres évaluées positivement ont déjà une candidature.")
-        else:
-            df_eligible["label"] = df_eligible.apply(
-                lambda r: f"{r['title']} — {r['hopital']}", axis=1
-            )
-            choix = st.selectbox("Sélectionne l'offre", df_eligible["label"].tolist())
-            job_row = df_eligible[df_eligible["label"] == choix].iloc[0]
-
-            col1, col2 = st.columns(2)
-            statut_new    = col1.selectbox("Statut initial", STATUTS)
-            date_cand_new = col2.date_input("Date de candidature", value=datetime.now().date())
-            notes_new     = st.text_area("Notes", placeholder="Ex: Candidature envoyée via RH, contact : dupont@aphp.fr", height=80)
-
-            if st.button("💾 Enregistrer la candidature", use_container_width=True, type="primary"):
-                with get_connection() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            INSERT INTO applications (job_id, statut, date_candidature, notes)
-                            VALUES (%s, %s, %s, %s)
-                        """, (job_row["id"], statut_new, date_cand_new, notes_new))
-                    conn.commit()
-                st.success("✅ Candidature enregistrée !")
-                st.cache_data.clear()
-                st.rerun()
-
-    st.divider()
-
-    # ── Liste des candidatures
-    with get_connection() as conn:
-        df_apps = pd.read_sql("""
-            SELECT a.id as app_id, a.job_id, a.statut, a.date_candidature, a.notes, a.updated_at,
-                   j.title, j.hopital, j.location, j.contrat, j.url, j.score, j.priorite
-            FROM applications a
-            JOIN jobs j ON a.job_id = j.id
-            ORDER BY a.date_candidature DESC NULLS LAST
-        """, conn)
-
-    if df_apps.empty:
-        st.info("Aucune candidature enregistrée pour l'instant.")
-        st.stop()
-
-    # ── Compteurs par statut
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("👀 En cours", len(df_apps[df_apps["statut"] == "👀 En cours d'examen"]))
-    col2.metric("📞 Entretien", len(df_apps[df_apps["statut"] == "📞 Entretien planifié"]))
-    col3.metric("✅ Offre reçue", len(df_apps[df_apps["statut"] == "✅ Offre reçue"]))
-    col4.metric("❌ Refusée", len(df_apps[df_apps["statut"] == "❌ Refusée"]))
-
-    st.divider()
-
-    # ── Détail par candidature
-    for _, row in df_apps.iterrows():
-        score = int(row["score"]) if pd.notna(row.get("score")) else "–"
-        with st.expander(f"{row['statut']} — **{row['title']}** — {row['hopital']}"):
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Score", f"{score}/100")
-            col2.metric("Priorité", row.get("priorite") or "–")
-            col3.metric("Candidature", str(row["date_candidature"])[:10] if pd.notna(row.get("date_candidature")) else "–")
-
-            st.markdown(f"**📍 {row['location']}** | **📄 {row['contrat']}**")
-
-            if pd.notna(row.get("notes")) and row["notes"]:
-                st.markdown(f"**📝 Notes :** {row['notes']}")
-
-            st.divider()
-
-            col_statut, col_notes = st.columns([1, 2])
-            with col_statut:
-                nouveau_statut = st.selectbox(
-                    "Changer le statut",
-                    STATUTS,
-                    index=STATUTS.index(row["statut"]) if row["statut"] in STATUTS else 0,
-                    key=f"statut_{row['app_id']}"
-                )
-            with col_notes:
-                nouvelles_notes = st.text_area(
-                    "Mettre à jour les notes",
-                    value=row["notes"] or "",
-                    height=80,
-                    key=f"notes_{row['app_id']}"
-                )
-
-            col_save, col_del, col_link = st.columns(3)
-            with col_save:
-                if st.button("💾 Sauvegarder", key=f"save_app_{row['app_id']}", use_container_width=True):
-                    with get_connection() as conn:
-                        with conn.cursor() as cur:
-                            cur.execute("""
-                                UPDATE applications
-                                SET statut = %s, notes = %s, updated_at = NOW()
-                                WHERE id = %s
-                            """, (nouveau_statut, nouvelles_notes, row["app_id"]))
-                        conn.commit()
-                    st.success("✅ Mis à jour !")
-                    st.cache_data.clear()
-                    st.rerun()
-            with col_del:
-                if st.button("🗑️ Supprimer", key=f"del_app_{row['app_id']}", use_container_width=True):
-                    with get_connection() as conn:
-                        with conn.cursor() as cur:
-                            cur.execute("DELETE FROM applications WHERE id = %s", (row["app_id"],))
-                        conn.commit()
-                    st.cache_data.clear()
-                    st.rerun()
-            with col_link:
-                st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")

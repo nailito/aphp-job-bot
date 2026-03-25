@@ -27,17 +27,22 @@ def save_run(n_scraped, n_new, n_removed, n_passed_ai, n_rejected_ai, n_scored, 
                   n_passed_ai, n_rejected_ai, n_scored, status, duration))
         conn.commit()
 
-def get_counts():
+def get_counts(new_ids: set):
+    if not new_ids:
+        return 0, 0, 0
+    placeholders = ",".join(["%s"] * len(new_ids))
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM jobs WHERE rejection_category = 'passed_filter_1' AND status = 'active'")
+            cur.execute(f"SELECT COUNT(*) FROM jobs WHERE id IN ({placeholders}) AND rejection_category = 'passed_filter_1'", list(new_ids))
             passed_ai = cur.fetchone()[0]
 
-            cur.execute("SELECT COUNT(*) FROM jobs WHERE rejection_category IN ('diplome_paramedical','surqualification','profil_inadequat') AND status = 'active'")
+            cur.execute(f"SELECT COUNT(*) FROM jobs WHERE id IN ({placeholders}) AND rejection_category IN ('diplome_paramedical','surqualification','profil_inadequat')", list(new_ids))
             rej_ai = cur.fetchone()[0]
 
-            cur.execute("SELECT COUNT(*) FROM jobs WHERE score IS NOT NULL AND status = 'active'")
+            cur.execute(f"SELECT COUNT(*) FROM jobs WHERE id IN ({placeholders}) AND score IS NOT NULL", list(new_ids))
             scored = cur.fetchone()[0]
+
+    return passed_ai, rej_ai, scored
 
     return passed_ai, rej_ai, scored
 
@@ -156,7 +161,7 @@ def run_pipeline():
         # ─────────────────────────
         # 5. STATS
         # ─────────────────────────
-        passed_ai, rej_ai, scored = get_counts()
+        passed_ai, rej_ai, scored = get_counts(new_ids)
         duration = int(time.time() - start)
 
         print("\n📊 Résumé final :")
