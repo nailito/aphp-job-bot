@@ -130,6 +130,7 @@ if page == "📊 Tableau de bord":
         with col_card:
             score_val = int(best["score"]) if pd.notna(best["score"]) else "–"
             prio = best.get("priorite", "–")
+            date_pub = best['date_publication'].strftime('%d/%m/%Y') if pd.notna(best.get('date_publication')) else '–'
             st.markdown(f"""
             <div style="
                 background:#f0f9ff;
@@ -142,7 +143,7 @@ if page == "📊 Tableau de bord":
                     {best['title']}
                 </div>
                 <div style="color:#444;margin-top:4px">
-                    🏥 {best['hopital']} · 📍 {best['location']} · 📄 {best['contrat']}
+                    🏥 {best['hopital']} · 📍 {best['location']} · 📄 {best['contrat']} · 📅 {date_pub}
                 </div>
                 <div style="margin-top:8px;color:#111">
                     🎯 <b>Score : {score_val}/100</b> · Priorité : <b>{prio}</b>
@@ -233,7 +234,14 @@ elif page == "🚀 À postuler":
     feedbacks = get_feedbacks()
 
     feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
-    df_postuler = df_active[df_active["id"].isin(feedbacks_positifs)].copy()
+    with get_connection() as conn:
+        df_already_applied = pd.read_sql("SELECT job_id FROM applications", conn)
+    already_applied_ids = set(df_already_applied["job_id"].tolist())
+
+    df_postuler = df_active[
+        df_active["id"].isin(feedbacks_positifs) &
+        ~df_active["id"].isin(already_applied_ids)
+    ].copy()
 
     if df_postuler.empty:
         st.info("Aucune offre à postuler — évalue des offres dans **📝 À évaluer**.")
