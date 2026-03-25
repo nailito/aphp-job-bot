@@ -4,7 +4,6 @@ import os
 import pandas as pd
 from datetime import datetime
 from config import EXCLUDED_METIERS
-from cover_letter import text_to_pdf
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -100,6 +99,15 @@ if page == "📊 Tableau de bord":
     else:
         st.warning("⚠️ Aucun pipeline exécuté pour l'instant.")
 
+    if not runs.empty:
+        from datetime import timezone
+        last_run_dt = pd.to_datetime(runs.iloc[0]["run_date"])
+        if last_run_dt.tzinfo is None:
+            last_run_dt = last_run_dt.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - last_run_dt
+        if delta.total_seconds() > 26 * 3600:  # 26h pour tolérer un léger retard
+            st.error(f"🚨 Pipeline en retard — dernier run il y a **{int(delta.total_seconds()//3600)}h**. Vérifie GitHub Actions.")
+
     st.divider()
 
     # ── Meilleure offre évaluée
@@ -172,7 +180,7 @@ if page == "📊 Tableau de bord":
 
     with col_pos:
         if st.button(f"🚀 Offres à postuler\n\n{n_a_postuler}", use_container_width=True):
-            st.session_state.nav = "🚀 Postuler"  # future page
+            st.session_state.nav = "🚀 À postuler"
             st.rerun()
 
     st.divider()
@@ -383,18 +391,24 @@ elif page == "📰 Rapport du jour":
 
     st.divider()
     st.subheader("🚀 Lancer le pipeline manuellement")
-    if st.button("▶️ Lancer le pipeline maintenant", use_container_width=True, type="primary"):
-        with st.spinner("Pipeline en cours... (peut prendre plusieurs minutes)"):
-            import subprocess
-            result = subprocess.run(["python", "pipeline.py"], capture_output=True, text=True)
-            if result.returncode == 0:
-                st.success("✅ Pipeline terminé !")
-                st.code(result.stdout[-2000:])
+    if st.button("▶️ Déclencher le pipeline via GitHub Actions", use_container_width=True, type="primary"):
+        import requests
+        gh_token = os.getenv("GH_WORKFLOW_TOKEN", "")
+        if not gh_token:
+            st.error("❌ Secret GH_WORKFLOW_TOKEN manquant.")
+        else:
+            resp = requests.post(
+                "https://api.github.com/repos/nailito/aphp-job-bot/actions/workflows/daily.yml/dispatches",
+                headers={
+                    "Authorization": f"Bearer {gh_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                json={"ref": "main"},
+            )
+            if resp.status_code == 204:
+                st.success("✅ Pipeline déclenché ! Résultats dans ~10 minutes.")
             else:
-                st.error("❌ Erreur pipeline")
-                st.code(result.stderr[-2000:])
-        st.cache_data.clear()
-        st.rerun()
+                st.error(f"❌ Erreur GitHub API : {resp.status_code} — {resp.text}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "🔍 Explorer les offres":
