@@ -349,11 +349,45 @@ elif page == "📰 Rapport du jour":
                 if df_p.empty:
                     st.info("Aucune offre passée le filtre IA.")
                 else:
-                    df_p = df_p[["title","metier","hopital","location","contrat","score","url"]].copy()
-                    df_p.columns = ["Titre","Métier","Hôpital","Lieu","Contrat","Score","URL"]
-                    st.dataframe(df_p, use_container_width=True, hide_index=True,
-                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                                       "Titre": st.column_config.TextColumn(width="large")})
+                    df_p = df_p.sort_values("score", ascending=False, na_position="last")
+                    for _, row in df_p.iterrows():
+                        score = int(row["score"]) if pd.notna(row.get("score")) else "–"
+                        prio  = row.get("priorite", "–")
+                        emoji = "🟢" if isinstance(score, int) and score >= 80 else "🟡" if isinstance(score, int) and score >= 60 else "⚪"
+
+                        with st.expander(f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {row['hopital']}"):
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric("Score", f"{score}/100" if score != "–" else "–")
+                            col2.metric("Priorité", prio)
+                            col3.metric("Contrat", row.get("contrat", "–"))
+
+                            st.markdown(f"**📍 Lieu :** {row.get('location','–')} | **🖥 Télétravail :** {row.get('teletravail','–')}")
+                            st.markdown(f"**🏥 Filière :** {row.get('filiere','–')} | **💼 Métier :** {row.get('metier','–')}")
+
+                            st.divider()
+
+                            if pd.notna(row.get("score_raison")):
+                                st.markdown("**🧠 Analyse IA :**")
+                                st.info(row["score_raison"])
+
+                            try:
+                                import json
+                                pf = json.loads(row.get("score_points_forts") or "[]")
+                                pp = json.loads(row.get("score_points_faibles") or "[]")
+                                col_pf, col_pp = st.columns(2)
+                                with col_pf:
+                                    if pf:
+                                        st.markdown("**✅ Points forts**")
+                                        for p in pf: st.markdown(f"- {p}")
+                                with col_pp:
+                                    if pp:
+                                        st.markdown("**⚠️ Points faibles**")
+                                        for p in pp: st.markdown(f"- {p}")
+                            except Exception:
+                                pass
+
+                            st.divider()
+                            st.link_button("🔗 Voir l'offre sur APHP →", row["url"], use_container_width=True, type="primary")
 
             with tab2:
                 df_r = df_nouvelles[df_nouvelles["rejection_category"].isin(
@@ -362,12 +396,20 @@ elif page == "📰 Rapport du jour":
                 if df_r.empty:
                     st.info("Aucune offre rejetée.")
                 else:
-                    df_r = df_r[["title","metier","rejection_category","rejection_reason","url"]].copy()
-                    df_r["rejection_category"] = df_r["rejection_category"].map(CATEGORY_LABELS)
-                    df_r.columns = ["Titre","Métier","Catégorie","Raison","URL"]
-                    st.dataframe(df_r, use_container_width=True, hide_index=True,
-                        column_config={"URL": st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                                       "Titre": st.column_config.TextColumn(width="large")})
+                    for _, row in df_r.iterrows():
+                        cat   = CATEGORY_LABELS.get(row.get("rejection_category",""), row.get("rejection_category",""))
+                        raison = row.get("rejection_reason") or row.get("raison") or "–"
+
+                        with st.expander(f"❌ **{row['title']}** — {row['hopital']}"):
+                            st.markdown(f"**💼 Métier :** {row.get('metier','–')} | **🏥 Filière :** {row.get('filiere','–')}")
+                            st.markdown(f"**📍 Lieu :** {row.get('location','–')} | **📄 Contrat :** {row.get('contrat','–')}")
+
+                            st.divider()
+                            st.markdown(f"**Catégorie de rejet :** `{cat}`")
+                            st.markdown(f"**Raison :** {raison}")
+
+                            st.divider()
+                            st.link_button("🔗 Voir l'offre sur APHP →", row["url"], use_container_width=True, type="primary")
 
             with tab3:
                 df_s = df_nouvelles[df_nouvelles["score"].notna()].sort_values("score", ascending=False)
