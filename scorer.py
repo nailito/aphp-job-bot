@@ -125,13 +125,31 @@ En tant que recruteur, évalue :
    - P3 (score 40-59) : match partiel, risque réel de rejet ou de déception
    - En dessous de 40 : ne pas recommander
 
+## RÈGLES DE RÉDACTION — OBLIGATOIRES
+
+⚠️ Il est STRICTEMENT INTERDIT de commencer la raison par une phrase générique comme :
+"Le candidat possède des compétences solides", "Le profil est pertinent", 
+"Le candidat présente une expérience intéressante" ou toute formule similaire.
+
+La raison DOIT :
+- Mentionner des éléments SPÉCIFIQUES à cette offre (nom du service, outil précis demandé, 
+  type de mission exact, niveau d'expérience requis, etc.)
+- Identifier le VRAI point de friction pour CE poste (pas une friction générique)
+- Conclure avec un verdict recruteur tranché (retenu / écarté / borderline avec réserve)
+
+Structure attendue pour "raison" :
+- Phrase 1 : ce qui colle spécifiquement entre le profil et CETTE offre 
+  (cite un élément concret de la description de l'offre)
+- Phrase 2 : le vrai point de friction ou risque de rejet pour CE poste précis
+- Phrase 3 : verdict recruteur honnête et tranché
+
 Réponds UNIQUEMENT en JSON valide, sans Markdown, sans texte avant ou après :
 {{
   "score": <0-100>,
   "priorite": "P1" | "P2" | "P3",
-  "raison": "<2-3 phrases honnêtes depuis le point de vue recruteur>",
-  "points_forts": ["<point 1>", "<point 2>"],
-  "points_faibles": ["<point éliminatoire potentiel 1>", "<point 2>"]
+  "raison": "<Phrase 1 spécifique à l'offre>. <Phrase 2 point de friction réel>. <Phrase 3 verdict tranché>",
+  "points_forts": ["<point spécifique à cette offre 1>", "<point spécifique 2>"],
+  "points_faibles": ["<point éliminatoire potentiel spécifique 1>", "<point spécifique 2>"]
 }}
 """
 
