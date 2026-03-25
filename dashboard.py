@@ -116,9 +116,14 @@ if page == "📊 Tableau de bord":
     feedbacks = get_feedbacks()
     feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
 
+    with get_connection() as conn:
+        df_already_applied = pd.read_sql("SELECT job_id FROM applications", conn)
+    already_applied_ids = set(df_already_applied["job_id"].tolist())
+
     df_top = df_active[
         (df_active["id"].isin(feedbacks_positifs)) &
-        (df_active["score"].notna())
+        (df_active["score"].notna()) &
+        (~df_active["id"].isin(already_applied_ids))
     ].copy()
 
     if not df_top.empty:
@@ -167,7 +172,10 @@ if page == "📊 Tableau de bord":
         (df_active["rejection_category"] == "passed_filter_1") &
         (~df_active["id"].isin(feedbacks_existants))
     ])
-    n_a_postuler = len(df_active[df_active["id"].isin(feedbacks_positifs)])
+    n_a_postuler = len(df_active[
+        df_active["id"].isin(feedbacks_positifs) &
+        ~df_active["id"].isin(already_applied_ids)
+    ])
 
     col_ev, col_pos = st.columns(2)
     if "nav" not in st.session_state:
@@ -300,22 +308,8 @@ elif page == "🚀 À postuler":
         st.divider()
 
         col_a, col_b = st.columns(2)
-        with col_a:
-            st.link_button("🚀 Postuler sur APHP →", job["url"],
-                           use_container_width=True, type="primary")
-        with col_b:
-            if st.button("✅ J'ai postulé", key=f"postule_{job_id}", use_container_width=True, type="primary"):
-                with get_connection() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("""
-                            INSERT INTO applications (job_id, statut, date_candidature)
-                            VALUES (%s, %s, %s)
-                            ON CONFLICT DO NOTHING
-                        """, (job["id"], "👀 En cours d'examen", datetime.now().date()))
-                    conn.commit()
-                st.success("✅ Candidature enregistrée dans 'Mes candidatures' !")
-                st.cache_data.clear()
-                st.rerun()
+        st.link_button("🚀 Postuler sur APHP →", job["url"],
+               use_container_width=True, type="primary")
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📰 Rapport du jour":
