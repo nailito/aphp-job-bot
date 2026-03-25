@@ -272,7 +272,8 @@ elif page == "🚀 À postuler":
         score = int(job["score"]) if pd.notna(job["score"]) else "–"
         col_s, col_p = st.columns(2)
         col_s.metric("Score", f"{score}/100")
-        col_p.metric("Priorité", job.get("priorite", "–"))
+        date_pub = job["date_publication"].strftime("%d/%m/%Y") if pd.notna(job.get("date_publication")) else "–"
+        col_p.metric("Publiée le", date_pub)
 
         if pd.notna(job.get("score_raison")):
             with st.expander("🧠 Analyse IA"):
@@ -295,12 +296,16 @@ elif page == "🚀 À postuler":
             st.link_button("🚀 Postuler sur APHP →", job["url"],
                            use_container_width=True, type="primary")
         with col_b:
-            if st.button("❌ Retirer", key=f"retirer_{job_id}", use_container_width=True):
+            if st.button("✅ J'ai postulé", key=f"postule_{job_id}", use_container_width=True, type="primary"):
                 with get_connection() as conn:
                     with conn.cursor() as cur:
-                        cur.execute("DELETE FROM feedback WHERE job_id = %s", (job["id"],))
+                        cur.execute("""
+                            INSERT INTO applications (job_id, statut, date_candidature)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, (job["id"], "👀 En cours d'examen", datetime.now().date()))
                     conn.commit()
-                st.success("Offre retirée.")
+                st.success("✅ Candidature enregistrée dans 'Mes candidatures' !")
                 st.cache_data.clear()
                 st.rerun()
 
@@ -425,7 +430,8 @@ elif page == "📰 Rapport du jour":
                         with st.expander(f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {row['hopital']}"):
                             col1, col2, col3 = st.columns(3)
                             col1.metric("Score", f"{score}/100")
-                            col2.metric("Priorité", prio)
+                            date_pub = str(row["date_publication"])[:10] if pd.notna(row.get("date_publication")) else "–"
+                            col2.metric("Publiée le", date_pub)
                             col3.metric("Contrat", row.get("contrat", "–"))
 
                             st.markdown(f"**📍 Lieu :** {row.get('location', '–')} | **🖥 Télétravail :** {row.get('teletravail', '–')}")
@@ -788,10 +794,30 @@ elif page == "🗑️ Offres retirées du site":
     if df_removed.empty:
         st.info("Aucune offre retirée.")
     else:
+        from database import get_feedbacks
+        feedbacks = get_feedbacks()
+        feedback_map = {f["job_id"]: f for f in feedbacks}
+
         st.caption(f"{len(df_removed)} offres retirées")
-        df_r = df_removed[["title","metier","hopital","contrat","last_seen"]].copy()
-        df_r.columns = ["Titre","Métier","Hôpital","Contrat","Dernière vue"]
-        st.dataframe(df_r, use_container_width=True, hide_index=True)
+
+        for _, row in df_removed.iterrows():
+            score = row.get("score")
+            passed_ia = pd.notna(score) and float(score) >= 50
+            evaluated = row["id"] in feedback_map
+
+            ia_badge  = "✅ Passée IA" if passed_ia else "❌ Non passée IA"
+            eval_badge = f"{feedback_map[row['id']]['decision']} Évaluée" if evaluated else "⬜ Non évaluée"
+
+            with st.expander(f"🗑️ **{row['title']}** — {row['hopital']} | {ia_badge} | {eval_badge}"):
+                st.markdown(f"**💼 Métier :** {row.get('metier','–')} | **📄 Contrat :** {row.get('contrat','–')}")
+                st.markdown(f"**📅 Dernière vue :** {str(row.get('last_seen',''))[:10]}")
+
+                if pd.notna(score):
+                    st.markdown(f"**🎯 Score IA :** {int(score)}/100")
+
+                if evaluated:
+                    f = feedback_map[row["id"]]
+                    st.markdown(f"**Ton évaluation :** {f['decision']} — {f.get('commentaire','–')}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "⚙️  Config":
@@ -827,7 +853,13 @@ elif page == "📨 Mes candidatures":
 
         # Exclure celles déjà en candidature
         with get_connection() as conn:
-            df_apps = pd.read_sql("SELECT job_id FROM applications", conn)
+            df_apps = pd.read_sql("""
+                SELECT a.id as app_id, a.job_id, a.statut, a.date_candidature, a.notes, a.updated_at,
+                    j.title, j.hopital, j.location, j.contrat, j.url, j.score, j.date_publication
+                FROM applications a
+                JOIN jobs j ON a.job_id = j.id
+                ORDER BY a.date_candidature DESC NULLS LAST
+            """, conn)
         already_applied = set(df_apps["job_id"].tolist())
         df_eligible = df_eligible[~df_eligible["id"].isin(already_applied)]
 
