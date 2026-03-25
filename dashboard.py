@@ -63,6 +63,7 @@ st.sidebar.caption(f"Sync : {str(df_all['last_seen'].max())[:16]}")
 pages = [
     "📊 Tableau de bord",
     "🚀 À postuler",
+    "📨 Mes candidatures",
     "📰 Rapport du jour",
     "🔍 Explorer les offres",
     "✅ Offres acceptées par l'IA",
@@ -809,3 +810,131 @@ elif page == "⚙️  Config":
     fil = df_active["filiere"].value_counts().reset_index()
     fil.columns = ["Filière","Offres"]
     st.dataframe(fil, use_container_width=True, hide_index=True)
+
+
+elif page == "📨 Mes candidatures":
+    st.title("📨 Mes candidatures")
+
+    STATUTS = ["👀 En cours d'examen", "📞 Entretien planifié", "✅ Offre reçue", "❌ Refusée"]
+
+    # ── Ajouter une candidature
+    with st.expander("➕ Ajouter une candidature", expanded=False):
+        # Offres éligibles : évaluées positivement
+        from database import get_feedbacks
+        feedbacks = get_feedbacks()
+        feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
+        df_eligible = df_active[df_active["id"].isin(feedbacks_positifs)].copy()
+
+        # Exclure celles déjà en candidature
+        with get_connection() as conn:
+            df_apps = pd.read_sql("SELECT job_id FROM applications", conn)
+        already_applied = set(df_apps["job_id"].tolist())
+        df_eligible = df_eligible[~df_eligible["id"].isin(already_applied)]
+
+        if df_eligible.empty:
+            st.info("Toutes tes offres évaluées positivement ont déjà une candidature.")
+        else:
+            df_eligible["label"] = df_eligible.apply(
+                lambda r: f"{r['title']} — {r['hopital']}", axis=1
+            )
+            choix = st.selectbox("Sélectionne l'offre", df_eligible["label"].tolist())
+            job_row = df_eligible[df_eligible["label"] == choix].iloc[0]
+
+            col1, col2 = st.columns(2)
+            statut_new    = col1.selectbox("Statut initial", STATUTS)
+            date_cand_new = col2.date_input("Date de candidature", value=datetime.now().date())
+            notes_new     = st.text_area("Notes", placeholder="Ex: Candidature envoyée via RH, contact : dupont@aphp.fr", height=80)
+
+            if st.button("💾 Enregistrer la candidature", use_container_width=True, type="primary"):
+                with get_connection() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            INSERT INTO applications (job_id, statut, date_candidature, notes)
+                            VALUES (%s, %s, %s, %s)
+                        """, (job_row["id"], statut_new, date_cand_new, notes_new))
+                    conn.commit()
+                st.success("✅ Candidature enregistrée !")
+                st.cache_data.clear()
+                st.rerun()
+
+    st.divider()
+
+    # ── Liste des candidatures
+    with get_connection() as conn:
+        df_apps = pd.read_sql("""
+            SELECT a.id as app_id, a.job_id, a.statut, a.date_candidature, a.notes, a.updated_at,
+                   j.title, j.hopital, j.location, j.contrat, j.url, j.score, j.priorite
+            FROM applications a
+            JOIN jobs j ON a.job_id = j.id
+            ORDER BY a.date_candidature DESC NULLS LAST
+        """, conn)
+
+    if df_apps.empty:
+        st.info("Aucune candidature enregistrée pour l'instant.")
+        st.stop()
+
+    # ── Compteurs par statut
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("👀 En cours", len(df_apps[df_apps["statut"] == "👀 En cours d'examen"]))
+    col2.metric("📞 Entretien", len(df_apps[df_apps["statut"] == "📞 Entretien planifié"]))
+    col3.metric("✅ Offre reçue", len(df_apps[df_apps["statut"] == "✅ Offre reçue"]))
+    col4.metric("❌ Refusée", len(df_apps[df_apps["statut"] == "❌ Refusée"]))
+
+    st.divider()
+
+    # ── Détail par candidature
+    for _, row in df_apps.iterrows():
+        score = int(row["score"]) if pd.notna(row.get("score")) else "–"
+        with st.expander(f"{row['statut']} — **{row['title']}** — {row['hopital']}"):
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Score", f"{score}/100")
+            col2.metric("Priorité", row.get("priorite") or "–")
+            col3.metric("Candidature", str(row["date_candidature"])[:10] if pd.notna(row.get("date_candidature")) else "–")
+
+            st.markdown(f"**📍 {row['location']}** | **📄 {row['contrat']}**")
+
+            if pd.notna(row.get("notes")) and row["notes"]:
+                st.markdown(f"**📝 Notes :** {row['notes']}")
+
+            st.divider()
+
+            col_statut, col_notes = st.columns([1, 2])
+            with col_statut:
+                nouveau_statut = st.selectbox(
+                    "Changer le statut",
+                    STATUTS,
+                    index=STATUTS.index(row["statut"]) if row["statut"] in STATUTS else 0,
+                    key=f"statut_{row['app_id']}"
+                )
+            with col_notes:
+                nouvelles_notes = st.text_area(
+                    "Mettre à jour les notes",
+                    value=row["notes"] or "",
+                    height=80,
+                    key=f"notes_{row['app_id']}"
+                )
+
+            col_save, col_del, col_link = st.columns(3)
+            with col_save:
+                if st.button("💾 Sauvegarder", key=f"save_app_{row['app_id']}", use_container_width=True):
+                    with get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                UPDATE applications
+                                SET statut = %s, notes = %s, updated_at = NOW()
+                                WHERE id = %s
+                            """, (nouveau_statut, nouvelles_notes, row["app_id"]))
+                        conn.commit()
+                    st.success("✅ Mis à jour !")
+                    st.cache_data.clear()
+                    st.rerun()
+            with col_del:
+                if st.button("🗑️ Supprimer", key=f"del_app_{row['app_id']}", use_container_width=True):
+                    with get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("DELETE FROM applications WHERE id = %s", (row["app_id"],))
+                        conn.commit()
+                    st.cache_data.clear()
+                    st.rerun()
+            with col_link:
+                st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")
