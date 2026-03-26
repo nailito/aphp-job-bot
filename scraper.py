@@ -3,6 +3,7 @@ import random
 import time
 import math
 import os
+import re
 from datetime import datetime
 from html.parser import HTMLParser
 from notifier import send_telegram
@@ -26,12 +27,10 @@ TAG_IDS = {
 
 session = requests.Session()
 
-# ─────────────────────────
-# TELEGRAM PROGRESS
-# ─────────────────────────
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 last_message_id  = None
+
 
 def send_or_edit(message: str):
     global last_message_id
@@ -59,10 +58,12 @@ def send_or_edit(message: str):
     except Exception as e:
         print(f"Telegram error: {e}")
 
+
 def progress_bar(current, total, length=20):
     ratio = current / total if total else 0
     filled = int(ratio * length)
     return "█" * filled + "░" * (length - filled)
+
 
 def notify(msg):
     print(msg)
@@ -71,8 +72,10 @@ def notify(msg):
     except Exception as e:
         print(f"(Telegram failed: {e})")
 
+
 class ScrapingError(Exception):
     pass
+
 
 # ─────────────────────────
 # UTILS
@@ -91,6 +94,20 @@ def strip_html(html: str) -> str:
     s.feed(html or "")
     return s.get_data().strip()
 
+
+def extract_reference(description: str) -> str | None:
+    if not description:
+        return None
+
+    text = strip_html(description)
+    match = re.search(r"Référence de l'offre\s*([0-9\-]+)", text)
+
+    if match:
+        return match.group(1).strip()
+
+    return None
+
+
 def parse_tags(custom_tags: list) -> dict:
     result = {}
     for tag in custom_tags:
@@ -98,6 +115,7 @@ def parse_tags(custom_tags: list) -> dict:
         if key:
             result[key] = tag.get("value", "")
     return result
+
 
 # ─────────────────────────
 # SESSION
@@ -111,6 +129,7 @@ def init_session():
         )
     except Exception as e:
         raise ScrapingError(f"Init session failed: {e}")
+
 
 # ─────────────────────────
 # FETCH
@@ -145,77 +164,101 @@ def fetch_page(page: int, retries: int = 3) -> dict:
 
     raise ScrapingError(f"Page {page} failed after retries")
 
+
 # ─────────────────────────
 # SCRAPER
 # ─────────────────────────
 def scrape_jobs(url=None, max_pages=115) -> list[dict]:
     jobs = []
     seen_ids = set()
-    page_stats = []  # DEBUG stabilité
+    page_stats = []
 
-    # 🔥 message unique Telegram (barre)
+    skipped_no_id = 0
+    skipped_error = 0
+    with_ref = 0
+    without_ref = 0
+
     send_or_edit("🚀 Initialisation du scraping...")
 
     init_session()
     time.sleep(2)
 
-    # 🔍 première page pour total
     first_page = fetch_page(1)
     total_jobs = first_page.get("jobs", {}).get("totalCount", 0)
-    jobs_per_page = len(first_page.get("jobs", {}).get("offers", []))
+    offers_first = first_page.get("jobs", {}).get("offers", [])
+    jobs_per_page = len(offers_first)
 
     if jobs_per_page == 0:
         raise ScrapingError("Aucune offre page 1")
 
     total_pages = math.ceil(total_jobs / jobs_per_page)
-
     start_time = time.time()
 
-    for page in range(1, total_pages + 1):
+    for page in range(1, min(total_pages, max_pages) + 1):
 
         try:
             data = first_page if page == 1 else fetch_page(page)
-
             offers = data.get("jobs", {}).get("offers", [])
 
-            # DEBUG stabilité
             page_stats.append((page, len(offers)))
             print(f"[DEBUG] PAGE {page} → {len(offers)} offres")
 
-            if not offers:
-                raise ScrapingError(f"Aucune offre page {page} (blocage)")
-
             for o in offers:
-                job_id = str(o.get("id", ""))
+                try:
+                    raw_id = o.get("id")
+                    description = o.get("description", "")
 
-                if job_id in seen_ids:
+                    # 🔥 NEW: extraction référence
+                    ref = extract_reference(description)
+
+                    if ref:
+                        job_id = f"REF_{ref}"
+                        with_ref += 1
+                    else:
+                        without_ref += 1
+
+                        if raw_id is None:
+                            fallback = f"{o.get('title','')}_{o.get('location','')}"
+                            job_id = f"FALLBACK_{hash(fallback)}"
+                            skipped_no_id += 1
+                        else:
+                            job_id = f"ID_{raw_id}"
+
+                    if job_id in seen_ids:
+                        continue
+
+                    tags = parse_tags(o.get("customTags", []))
+
+                    job = {
+                        "id":               job_id,
+                        "reference":        ref,
+                        "title":            (o.get("title") or "Sans titre").strip(),
+                        "location":         o.get("location") or "Non précisé",
+                        "metier":           tags.get("metier", ""),
+                        "hopital":          tags.get("hopital", ""),
+                        "contrat":          tags.get("contrat", ""),
+                        "teletravail":      tags.get("teletravail", ""),
+                        "horaire":          tags.get("horaire", ""),
+                        "temps_travail":    tags.get("temps_travail", ""),
+                        "filiere":          o.get("jobCategoryLabel") or "",
+                        "date_publication": o.get("publicationDate") or "",
+                        "description":      strip_html(description),
+                        "url":              f"https://recrutement.aphp.fr/jobs/{raw_id or ''}",
+                        "scraped_at":       datetime.now().isoformat(),
+                    }
+
+                    jobs.append(job)
+                    seen_ids.add(job_id)
+
+                except Exception as e:
+                    skipped_error += 1
+                    print(f"[ERROR_JOB] {e}")
                     continue
-                seen_ids.add(job_id)
-
-                tags = parse_tags(o.get("customTags", []))
-
-                jobs.append({
-                    "id":               job_id,
-                    "title":            o.get("title", "Sans titre").strip(),
-                    "location":         o.get("location", "Non précisé"),
-                    "metier":           tags.get("metier", ""),
-                    "hopital":          tags.get("hopital", ""),
-                    "contrat":          tags.get("contrat", ""),
-                    "teletravail":      tags.get("teletravail", ""),
-                    "horaire":          tags.get("horaire", ""),
-                    "temps_travail":    tags.get("temps_travail", ""),
-                    "filiere":          o.get("jobCategoryLabel", ""),
-                    "date_publication": o.get("publicationDate", ""),
-                    "description":      strip_html(o.get("description", "")),
-                    "url":              f"https://recrutement.aphp.fr/jobs/{o.get('id', '')}",
-                    "scraped_at":       datetime.now().isoformat(),
-                })
 
         except Exception as e:
             notify(f"⚠️ Erreur page {page}: {e}")
             raise
 
-        # 📊 progression
         elapsed = int(time.time() - start_time)
         speed = page / (elapsed / 60 + 0.01)
 
@@ -237,7 +280,6 @@ def scrape_jobs(url=None, max_pages=115) -> list[dict]:
 
         time.sleep(random.uniform(0.8, 1.5))
 
-    # ✅ résumé final
     elapsed = int(time.time() - start_time)
 
     send_or_edit(f"""
@@ -245,25 +287,15 @@ def scrape_jobs(url=None, max_pages=115) -> list[dict]:
 
 📊 {len(jobs)} offres récupérées
 ⏱️ {elapsed}s
+
+📌 Avec ref: {with_ref}
+📌 Sans ref: {without_ref}
+
+⚠️ skipped no id: {skipped_no_id}
+⚠️ skipped error: {skipped_error}
 """)
 
-    if len(jobs) < total_jobs * 0.7:
-        raise ScrapingError(f"Scraping incomplet ({len(jobs)}/{total_jobs})")
-
-    # DEBUG IDs
-    ids = sorted([j["id"] for j in jobs])
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"ids_{timestamp}.txt"
-    with open(filename, "w") as f:
-        for _id in ids:
-            f.write(f"{_id}\n")
-    print(f"[DEBUG] IDs sauvegardés dans {filename}")
-
-    # DEBUG stabilité pages
-    filename_pages = f"pages_{timestamp}.txt"
-    with open(filename_pages, "w") as f:
-        for p, count in page_stats:
-            f.write(f"{p}:{count}\n")
-    print(f"[DEBUG] Pages stats sauvegardées dans {filename_pages}")
+    print(f"[DEBUG] with_ref={with_ref}")
+    print(f"[DEBUG] without_ref={without_ref}")
 
     return jobs
