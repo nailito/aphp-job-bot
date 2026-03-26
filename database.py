@@ -104,11 +104,27 @@ def upsert_jobs(jobs: list[dict]) -> dict:
                         (now, job["id"])
                     )
 
-            for job_id in removed_ids:
-                cur.execute(
-                    "UPDATE jobs SET status = 'removed' WHERE id = %s",
-                    (job_id,)
-                )
+            if removed_ids:
+                placeholders = ",".join(["%s"] * len(removed_ids))
+                cur.execute(f"""
+                    UPDATE jobs SET miss_count = COALESCE(miss_count, 0) + 1
+                    WHERE id IN ({placeholders})
+                """, list(removed_ids))
+
+                # Supprimer seulement après 5 misses consécutifs
+                cur.execute(f"""
+                    UPDATE jobs SET status = 'removed'
+                    WHERE id IN ({placeholders}) AND miss_count >= 5
+                """, list(removed_ids))
+
+            # Remettre à 0 le miss_count des offres qui réapparaissent
+            if existing_ids & site_ids:
+                seen_ids = list(existing_ids & site_ids)
+                placeholders_seen = ",".join(["%s"] * len(seen_ids))
+                cur.execute(f"""
+                    UPDATE jobs SET miss_count = 0
+                    WHERE id IN ({placeholders_seen})
+                """, seen_ids)
 
         conn.commit()
 
