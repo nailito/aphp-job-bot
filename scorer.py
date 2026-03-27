@@ -103,6 +103,16 @@ def save_score(job_id: str, score: int, priorite: str,
                 """, (f"Score trop bas ({score}/100) : {raison}", job_id))
         conn.commit()
 
+    if score >= 70:
+        from notifier import send_telegram_alert
+        send_telegram_alert(
+            f"🎯 <b>Nouvelle offre [{priorite}] — {score}/100</b>\n"
+            f"📋 {job.get('title')}\n"
+            f"🏥 {job.get('hopital')} · {job.get('location')}\n"
+            f"🔗 {job.get('url')}"
+        )
+
+
 PROMPT_TEMPLATE = """
 Tu es un recruteur senior à l'AP-HP. Tu reçois le CV d'un candidat et une offre d'emploi.
 Ton rôle est d'évaluer honnêtement si ce candidat serait retenu ou écarté pour ce poste.

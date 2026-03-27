@@ -72,12 +72,15 @@ def upsert_jobs(jobs: list[dict]) -> dict:
     now = datetime.now().isoformat()
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM jobs WHERE status = 'active'")
-            existing_ids = {row[0] for row in cur.fetchall()}
+            # ← Tous les IDs connus, pas seulement les actifs
+            cur.execute("SELECT id, status FROM jobs")
+            rows = cur.fetchall()
+            existing_ids = {r[0] for r in rows if r[1] == 'active'}
+            all_known_ids = {r[0] for r in rows}
 
             site_ids    = {j["id"] for j in jobs}
-            new_ids     = site_ids - existing_ids
-            removed_ids = existing_ids - site_ids
+            new_ids     = site_ids - all_known_ids        # ← vraiment nouveaux
+            missing_ids = existing_ids - site_ids         # ← absents ce run
             new_jobs    = [j for j in jobs if j["id"] in new_ids]
 
             for job in new_jobs:
@@ -97,42 +100,47 @@ def upsert_jobs(jobs: list[dict]) -> dict:
                     job.get("description",""), job.get("url",""), now, now
                 ))
 
+            # Réactiver les offres qui réapparaissent après removed
+            reactivated = (all_known_ids - existing_ids) & site_ids
+            for job_id in reactivated:
+                cur.execute("""
+                    UPDATE jobs SET status = 'active', miss_count = 0, last_seen = %s
+                    WHERE id = %s
+                """, (now, job_id))
+
+            # Mettre à jour last_seen des offres vues
             for job in jobs:
                 if job["id"] in existing_ids:
                     cur.execute(
-                        "UPDATE jobs SET last_seen = %s WHERE id = %s",
+                        "UPDATE jobs SET last_seen = %s, miss_count = 0 WHERE id = %s",
                         (now, job["id"])
                     )
 
-            if removed_ids:
-                placeholders = ",".join(["%s"] * len(removed_ids))
+            # Incrémenter miss_count des absents
+            newly_removed = set()
+            if missing_ids:
+                placeholders = ",".join(["%s"] * len(missing_ids))
                 cur.execute(f"""
                     UPDATE jobs SET miss_count = COALESCE(miss_count, 0) + 1
                     WHERE id IN ({placeholders})
-                """, list(removed_ids))
+                """, list(missing_ids))
 
-                # Supprimer seulement après 5 misses consécutifs
                 cur.execute(f"""
                     UPDATE jobs SET status = 'removed'
                     WHERE id IN ({placeholders}) AND miss_count >= 5
-                """, list(removed_ids))
-
-            # Remettre à 0 le miss_count des offres qui réapparaissent
-            if existing_ids & site_ids:
-                seen_ids = list(existing_ids & site_ids)
-                placeholders_seen = ",".join(["%s"] * len(seen_ids))
-                cur.execute(f"""
-                    UPDATE jobs SET miss_count = 0
-                    WHERE id IN ({placeholders_seen})
-                """, seen_ids)
+                    RETURNING id
+                """, list(missing_ids))
+                newly_removed = {r[0] for r in cur.fetchall()}
 
         conn.commit()
 
     print(f"  🆕 {len(new_jobs)} nouvelles offres")
-    print(f"  🗑️  {len(removed_ids)} offres retirées")
+    print(f"  🗑️  {len(newly_removed)} offres retirées (miss >= 5)")
+    print(f"  ⚠️  {len(missing_ids)} absentes ce run (miss_count +1)")
+    print(f"  🔄  {len(reactivated)} offres réactivées")
     print(f"  ♻️  {len(existing_ids & site_ids)} offres déjà connues")
-    return {"new": new_jobs, "removed": list(removed_ids)}
-
+    return {"new": new_jobs, "removed": list(newly_removed)}
+    
 def save_scores(jobs: list[dict]):
     with get_connection() as conn:
         with conn.cursor() as cur:
