@@ -406,15 +406,15 @@ elif page == "📨 Mes candidatures":
                     key=f"statut_{row['app_id']}"
                 )
 
-            # ← ajouter ici
-            refus_raison = None
+            refus_raison = row.get("refus_raison") or "" 
             if nouveau_statut == "❌ Refusée":
                 refus_raison = st.text_input(
                     "Raison du refus",
-                    value=row.get("refus_raison") or "",
+                    value=refus_raison,
                     placeholder="Ex: Pas assez d'expérience hospitalière française",
                     key=f"refus_{row['app_id']}"
                 )
+
             with col_notes:
                 nouvelles_notes = st.text_area(
                     "Mettre à jour les notes",
