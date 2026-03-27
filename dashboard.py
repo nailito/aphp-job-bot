@@ -619,7 +619,7 @@ elif page == "📰 Rapport du jour":
         else:
             resp = requests.post(
                 "https://api.github.com/repos/nailito/aphp-job-bot/actions/workflows/daily.yml/dispatches",
-                headers={f
+                headers={
                     "Authorization": f"Bearer {gh_token}",
                     "Accept": "application/vnd.github+json",
                 },
