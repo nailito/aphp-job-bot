@@ -213,6 +213,8 @@ def scrape_jobs(url=None, max_pages=115) -> list[dict]:
 
                     job_id = str(raw_id)  # ← format original
 
+
+                    description = o.get("description", "")
                     ref = extract_reference(description)
                     if ref:
                         with_ref += 1
