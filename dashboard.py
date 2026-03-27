@@ -405,6 +405,16 @@ elif page == "📨 Mes candidatures":
                     index=STATUTS.index(row["statut"]) if row["statut"] in STATUTS else 0,
                     key=f"statut_{row['app_id']}"
                 )
+
+            # ← ajouter ici
+            refus_raison = None
+            if nouveau_statut == "❌ Refusée":
+                refus_raison = st.text_input(
+                    "Raison du refus",
+                    value=row.get("refus_raison") or "",
+                    placeholder="Ex: Pas assez d'expérience hospitalière française",
+                    key=f"refus_{row['app_id']}"
+                )
             with col_notes:
                 nouvelles_notes = st.text_area(
                     "Mettre à jour les notes",
@@ -420,9 +430,9 @@ elif page == "📨 Mes candidatures":
                         with conn.cursor() as cur:
                             cur.execute("""
                                 UPDATE applications
-                                SET statut = %s, notes = %s, updated_at = NOW()
+                                SET statut = %s, notes = %s, refus_raison = %s, updated_at = NOW()
                                 WHERE id = %s
-                            """, (nouveau_statut, nouvelles_notes, row["app_id"]))
+                            """, (nouveau_statut, nouvelles_notes, refus_raison, row["app_id"]))
                         conn.commit()
                     st.success("✅ Mis à jour !")
                     st.cache_data.clear()
@@ -609,7 +619,7 @@ elif page == "📰 Rapport du jour":
         else:
             resp = requests.post(
                 "https://api.github.com/repos/nailito/aphp-job-bot/actions/workflows/daily.yml/dispatches",
-                headers={
+                headers={f
                     "Authorization": f"Bearer {gh_token}",
                     "Accept": "application/vnd.github+json",
                 },

@@ -12,6 +12,20 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 def get_connection():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
+def load_refus_candidatures() -> list[dict]:
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT a.refus_raison, j.title, j.metier, j.filiere
+                FROM applications a
+                JOIN jobs j ON a.job_id = j.id
+                WHERE a.statut = '❌ Refusée'
+                AND a.refus_raison IS NOT NULL
+                AND a.refus_raison != ''
+            """)
+            rows = cur.fetchall()
+    return [{"refus_raison": r[0], "title": r[1], "metier": r[2], "filiere": r[3]} for r in rows]
+
 def load_jobs_to_score() -> list[dict]:
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -44,19 +58,28 @@ def load_feedbacks() -> list[dict]:
 
 def build_feedback_examples(feedbacks: list[dict]) -> str:
     if not feedbacks:
-        return "Aucun feedback disponible pour l'instant."
-    lines = []
-    for f in feedbacks:
-        decision_label = {
-            "⭐": "EXCELLENT",
-            "👍": "INTÉRESSANT",
-            "👎": "PAS INTÉRESSANT"
-        }.get(f["decision"], f["decision"])
-        line = f"- {decision_label} : '{f['title']}' ({f['metier']})"
-        if f["commentaire"]:
-            line += f" → \"{f['commentaire']}\""
-        lines.append(line)
-    return "\n".join(lines)
+        lines = []
+    else:
+        lines = []
+        for f in feedbacks:
+            decision_label = {
+                "⭐": "EXCELLENT",
+                "👍": "INTÉRESSANT",
+                "👎": "PAS INTÉRESSANT"
+            }.get(f["decision"], f["decision"])
+            line = f"- {decision_label} : '{f['title']}' ({f['metier']})"
+            if f["commentaire"]:
+                line += f" → \"{f['commentaire']}\""
+            lines.append(line)
+
+    # ← ajouter les refus recruteurs comme signal faible
+    refus = load_refus_candidatures()
+    if refus:
+        lines.append("\nRefus recruteurs (signal contextuel, ne pas surpondérer) :")
+        for r in refus:
+            lines.append(f"- REFUSÉ PAR RECRUTEUR : '{r['title']}' ({r['metier']}) → \"{r['refus_raison']}\"")
+
+    return "\n".join(lines) if lines else "Aucun feedback disponible pour l'instant."
 
 def save_score(job_id: str, score: int, priorite: str,
                raison: str, points_forts: list, points_faibles: list):
