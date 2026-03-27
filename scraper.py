@@ -206,13 +206,15 @@ def scrape_jobs(url=None, max_pages=115) -> list[dict]:
             for o in offers:
                 try:
                     raw_id = o.get("id")
-                    description = o.get("description", "")
 
-                    # 🔥 NEW: extraction référence
+                    if raw_id is None:
+                        skipped_no_id += 1
+                        continue
+
+                    job_id = str(raw_id)  # ← format original
+
                     ref = extract_reference(description)
-
                     if ref:
-                        job_id = f"REF_{ref}"
                         with_ref += 1
                     else:
                         without_ref += 1
