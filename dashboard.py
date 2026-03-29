@@ -122,10 +122,13 @@ if page == "📊 Tableau de bord":
     feedbacks = get_feedbacks()
     feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
 
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+
     df_top = df_active[
         (df_active["id"].isin(feedbacks_positifs)) &
         (df_active["score"].notna()) &
-        (~df_active["id"].isin(already_applied_ids))
+        (~df_active["id"].isin(already_applied_ids)) &
+        (pd.to_datetime(df_active["date_publication"], utc=True, errors="coerce") >= cutoff)
     ].copy()
 
     if not df_top.empty:
@@ -249,9 +252,12 @@ elif page == "🚀 À postuler":
         df_already_applied = pd.read_sql("SELECT job_id FROM applications", conn)
     already_applied_ids = set(df_already_applied["job_id"].tolist())
 
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+
     df_postuler = df_active[
         df_active["id"].isin(feedbacks_positifs) &
-        ~df_active["id"].isin(already_applied_ids)
+        ~df_active["id"].isin(already_applied_ids) &
+        (pd.to_datetime(df_active["date_publication"], utc=True, errors="coerce") >= cutoff)
     ].copy()
 
     if df_postuler.empty:
