@@ -180,8 +180,9 @@ if page == "📊 Tableau de bord":
     ])
     n_a_postuler = len(df_active[
         df_active["id"].isin(feedbacks_positifs) &
-        ~df_active["id"].isin(already_applied_ids)
-    ])
+        ~df_active["id"].isin(already_applied_ids) &
+        (pd.to_datetime(df_active["date_publication"], utc=True, errors="coerce") >= cutoff)
+    ].copy())
 
     if "nav" not in st.session_state:
         st.session_state.nav = "📊 Tableau de bord"
