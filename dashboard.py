@@ -515,11 +515,6 @@ elif page == "📰 Rapport du jour":
                             col2.metric("Priorité", prio)
                             col3.metric("Publiée le", date_pub)
 
-                            st.markdown(f"**📍 Lieu :** {row.get('location','–')} | **🖥 Télétravail :** {row.get('teletravail','–')}")
-                            st.markdown(f"**🏥 Filière :** {row.get('filiere','–')} | **💼 Métier :** {row.get('metier','–')}")
-
-                            st.divider()
-
                             if pd.notna(row.get("score_raison")):
                                 st.markdown("**🧠 Analyse IA :**")
                                 st.info(row["score_raison"])
@@ -556,11 +551,12 @@ elif page == "📰 Rapport du jour":
                         date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
 
                         with st.expander(f"❌ **{row['title']}** — {row['hopital']}"):
-                            st.markdown(f"**💼 Métier :** {row.get('metier','–')} | **🏥 Filière :** {row.get('filiere','–')}")
-                            st.markdown(f"**📍 Lieu :** {row.get('location','–')} | **📄 Contrat :** {row.get('contrat','–')} | **📅 Publiée le :** {date_pub}")
-                            st.divider()
-                            st.markdown(f"**Catégorie de rejet :** `{cat}`")
+                            col1, col2 = st.columns(2)
+                            col1.metric("Catégorie", cat)
+                            col2.metric("Publiée le", date_pub)
+
                             st.markdown(f"**Raison :** {raison}")
+
                             st.divider()
                             st.link_button("🔗 Voir l'offre sur APHP →", row["url"], use_container_width=True, type="primary")
 
@@ -580,11 +576,6 @@ elif page == "📰 Rapport du jour":
                             col1.metric("Score", f"{score}/100")
                             col2.metric("Priorité", prio)
                             col3.metric("Publiée le", date_pub)
-
-                            st.markdown(f"**📍 Lieu :** {row.get('location','–')} | **🖥 Télétravail :** {row.get('teletravail','–')}")
-                            st.markdown(f"**🏥 Filière :** {row.get('filiere','–')} | **💼 Métier :** {row.get('metier','–')}")
-
-                            st.divider()
 
                             if pd.notna(row.get("score_raison")):
                                 st.markdown("**🧠 Analyse IA :**")
@@ -745,19 +736,14 @@ elif page == "❌ Offres refusées par score":
             score   = int(row["score"]) if pd.notna(row.get("score")) else 0
 
             with st.expander(f"🔴 {score}/100 — **{row['title']}** — {row['hopital']}"):
-                st.markdown(f"**Métier :** {row['metier']} | **Filière :** {row['filiere']}")
-                st.markdown(f"**📍 {row['location']}** | **📄 {row['contrat']}** | **🖥 {row['teletravail']}**")
-                st.link_button("Voir l'offre →", row["url"])
-
-                st.divider()
-                col_score, col_prio = st.columns(2)
+                col_score, col_prio, col_date = st.columns(3)
                 col_score.metric("Score", f"{score}/100")
                 col_prio.metric("Priorité", row.get("priorite", "–"))
-                st.markdown(f"**Raison du refus :** {row.get('score_raison', '–')}")
+                scored_at = str(row['scored_at'])[:10] if pd.notna(row.get("scored_at")) else "–"
+                col_date.metric("Scorée le", scored_at)
 
-                # Date de scoring
-                if pd.notna(row.get("scored_at")):
-                    st.caption(f"🕐 Scorée le {str(row['scored_at'])[:16].replace('T', ' à ')}")
+                if pd.notna(row.get("score_raison")):
+                    st.markdown(f"**🧠 Analyse IA :** {row['score_raison']}")
 
                 if pd.notna(row.get("score_points_faibles")):
                     try:
@@ -771,23 +757,27 @@ elif page == "❌ Offres refusées par score":
                         pass
 
                 st.divider()
-                if st.button("🔄 Remettre en question cette évaluation", key=f"reeval_{job_key}", use_container_width=True):
-                    with get_connection() as conn:
-                        with conn.cursor() as cur:
-                            cur.execute("""
-                                UPDATE jobs
-                                SET rejection_category = 'passed_filter_1',
-                                    score = NULL, priorite = NULL,
-                                    score_raison = NULL,
-                                    score_points_forts = NULL,
-                                    score_points_faibles = NULL,
-                                    scored_at = NULL
-                                WHERE id = %s
-                            """, (row["id"],))
-                        conn.commit()
-                    st.success("✅ Offre remise dans la liste à évaluer !")
-                    st.cache_data.clear()
-                    st.rerun()
+                col_btn, col_link = st.columns(2)
+                with col_btn:
+                    if st.button("🔄 Remettre en question cette évaluation", key=f"reeval_{job_key}", use_container_width=True):
+                        with get_connection() as conn:
+                            with conn.cursor() as cur:
+                                cur.execute("""
+                                    UPDATE jobs
+                                    SET rejection_category = 'passed_filter_1',
+                                        score = NULL, priorite = NULL,
+                                        score_raison = NULL,
+                                        score_points_forts = NULL,
+                                        score_points_faibles = NULL,
+                                        scored_at = NULL
+                                    WHERE id = %s
+                                """, (row["id"],))
+                            conn.commit()
+                        st.success("✅ Offre remise dans la liste à évaluer !")
+                        st.cache_data.clear()
+                        st.rerun()
+                with col_link:
+                    st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "📝 À évaluer":
@@ -835,16 +825,14 @@ elif page == "📝 À évaluer":
                 job_key     = f"{idx}_{job_id}"
 
                 with st.expander(f"{score_label}{prio_label}**{row['title']}** — {row['hopital']}"):
-                    st.markdown(f"**Métier :** {row['metier']} | **Filière :** {row['filiere']}")
-                    st.markdown(f"**📍 {row['location']}** | **📄 {row['contrat']}** | **🖥 {row['teletravail']}**")
-
                     date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
-                    st.markdown(f"**📅 Publiée le :** {date_pub}")
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Score", f"{int(row['score'])}/100" if pd.notna(row.get("score")) else "–")
+                    col2.metric("Priorité", row.get("priorite", "–"))
+                    col3.metric("Publiée le", date_pub)
 
-                    if pd.notna(row.get("scored_at")):
-                        st.caption(f"🕐 Scorée le {str(row['scored_at'])[:16].replace('T', ' à ')}")
-
-                    st.link_button("Voir l'offre →", row["url"])
+                    if pd.notna(row.get("score_raison")):
+                        st.markdown(f"**🧠 Analyse IA :** {row['score_raison']}")
 
                     if st.button("✨ Générer résumé", key=f"resume_{job_key}"):
                         with st.spinner("Génération en cours..."):
@@ -871,11 +859,8 @@ Description : {str(row.get('description', ''))[:1500]}
                     if f"resume_text_{job_id}" in st.session_state:
                         st.markdown(st.session_state[f"resume_text_{job_id}"])
 
-                    if pd.notna(row.get("score")):
-                        col_score, col_prio = st.columns(2)
-                        col_score.metric("Score", f"{int(row['score'])}/100")
-                        col_prio.metric("Priorité", row.get("priorite", "–"))
-                        st.markdown(f"**Analyse IA :** {row.get('score_raison', '–')}")
+                    st.divider()
+                    st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True)
 
                     st.divider()
 
@@ -937,9 +922,26 @@ elif page == "🆕 Nouvelles offres":
         st.info("Aucune nouvelle offre aujourd'hui.")
     else:
         for _, row in df_nf.iterrows():
-            with st.expander(f"🆕 {row['title']} — {row['hopital']}"):
-                st.markdown(f"**Métier :** {row['metier']} | **Lieu :** {row['location']} | **Contrat :** {row['contrat']}")
-                st.link_button("Voir l'offre →", row["url"])
+            score = int(row["score"]) if pd.notna(row.get("score")) else None
+            cat   = row.get("rejection_category", "")
+            if score is not None:
+                header = f"🆕 {score}/100 — **{row['title']}** — {row['hopital']}"
+            else:
+                header = f"🆕 **{row['title']}** — {row['hopital']}"
+
+            with st.expander(header):
+                if score is not None:
+                    st.metric("Score", f"{score}/100")
+                    if pd.notna(row.get("score_raison")):
+                        st.markdown(f"**🧠 Analyse IA :** {row['score_raison']}")
+                elif cat and cat != "passed_filter_1":
+                    raison = row.get("rejection_reason") or row.get("raison") or "–"
+                    cat_label = CATEGORY_LABELS.get(cat, cat)
+                    st.markdown(f"**Rejet :** {cat_label}")
+                    st.markdown(f"**Raison :** {raison}")
+
+                st.divider()
+                st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "🗑️ Offres retirées du site":
@@ -962,15 +964,23 @@ elif page == "🗑️ Offres retirées du site":
             eval_badge = f"{feedback_map[row['id']]['decision']} Évaluée" if evaluated else "⬜ Non évaluée"
 
             with st.expander(f"🗑️ **{row['title']}** — {row['hopital']} | {ia_badge} | {eval_badge}"):
-                st.markdown(f"**💼 Métier :** {row.get('metier','–')} | **📄 Contrat :** {row.get('contrat','–')}")
-                st.markdown(f"**📅 Dernière vue :** {str(row.get('last_seen',''))[:10]}")
+                col1, col2 = st.columns(2)
+                col1.metric("Score IA", f"{int(score)}/100" if pd.notna(score) else "–")
+                col2.metric("Dernière vue", str(row.get('last_seen',''))[:10])
 
-                if pd.notna(score):
-                    st.markdown(f"**🎯 Score IA :** {int(score)}/100")
+                if pd.notna(score) and pd.notna(row.get("score_raison")):
+                    st.markdown(f"**🧠 Analyse IA :** {row['score_raison']}")
+                elif not passed_ia and (row.get("rejection_reason") or row.get("raison")):
+                    raison = row.get("rejection_reason") or row.get("raison") or "–"
+                    cat = CATEGORY_LABELS.get(row.get("rejection_category",""), row.get("rejection_category",""))
+                    st.markdown(f"**Rejet :** {cat} — {raison}")
 
                 if evaluated:
                     f = feedback_map[row["id"]]
                     st.markdown(f"**Ton évaluation :** {f['decision']} — {f.get('commentaire','–')}")
+
+                st.divider()
+                st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")
 
 # ══════════════════════════════════════════════════════════════════════════════
 elif page == "⚙️  Config":
