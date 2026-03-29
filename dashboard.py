@@ -4,6 +4,7 @@ import os
 import pandas as pd
 from datetime import datetime, timezone
 from config import EXCLUDED_METIERS
+from datetime import datetime, timezone, timedelta
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
