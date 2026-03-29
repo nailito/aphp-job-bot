@@ -668,14 +668,15 @@ elif page == "🔍 Explorer les offres":
         lambda r: r.get("score_raison") or r.get("rejection_reason") or r.get("raison") or "–",
         axis=1
     )
-    df_d = df_d[["title","statut_score","raison_detaillee","url"]].copy()
-    df_d.columns = ["Titre","Statut / Score","Analyse / Raison","Lien"]
+    df_d = df_d[["title","statut_score","raison_detaillee","date_publication","url"]].copy()
+    df_d.columns = ["Titre","Statut / Score","Analyse / Raison","Publiée le","Lien"]
     st.dataframe(df_d, use_container_width=True, hide_index=True,
         column_config={
             "Lien":             st.column_config.LinkColumn("Lien", display_text="Voir →"),
             "Titre":            st.column_config.TextColumn(width="medium"),
             "Statut / Score":   st.column_config.TextColumn(width="small"),
             "Analyse / Raison": st.column_config.TextColumn(width="large"),
+            "Publiée le":       st.column_config.DateColumn(format="DD/MM/YYYY", width="small"),
         })
 
     st.divider()
