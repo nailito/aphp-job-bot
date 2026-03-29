@@ -6,6 +6,7 @@ import psycopg2
 from groq import Groq
 from config import GROQ_API_KEY
 from tqdm import tqdm
+from datetime import datetime, timezone, timedelta
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -66,6 +67,21 @@ def load_unfiltered_jobs() -> list[dict]:
             rows = cur.fetchall()
     cols = ["id", "title", "metier", "filiere", "description"]
     return [dict(zip(cols, r)) for r in rows]
+
+
+def is_too_old(job: dict, max_days: int = 90) -> bool:
+    raw = job.get("date_publication")
+    if not raw:
+        return False
+    try:
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).days > max_days
+    except Exception:
+        return False
+
+
 
 def mark_rejected(job_id: str, category: str, reason: str):
     with get_connection() as conn:
@@ -186,6 +202,13 @@ def run_filter_1(limit: int = None):
             mark_passed(job["id"], f"Passage automatique : métier qualifiant '{job.get('metier')}'")
             auto_passed += 1
             print(f"    🙈 Auto-pass métier : '{job.get('metier')}'")
+            continue
+
+        if is_too_old(job):
+            mark_rejected(job["id"], "trop_ancienne",
+                          f"Offre publiée il y a plus de 90 jours ({job.get('date_publication', '')[:10]})")
+            rejected += 1
+            print(f"    📅 Rejetée (trop ancienne) : {job.get('date_publication', '')[:10]}")
             continue
 
         kw_found = check_pass_keywords(job)
