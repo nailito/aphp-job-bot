@@ -657,12 +657,25 @@ elif page == "🔍 Explorer les offres":
     df_view = df_view.sort_values("date_publication", ascending=False)
     st.caption(f"{len(df_view)} offres")
 
-    df_d = df_view[["title","metier","filiere","hopital","location","contrat","teletravail","date_publication","url"]].copy()
-    df_d.columns = ["Titre","Métier","Filière","Hôpital","Lieu","Contrat","Télétravail","Date","URL"]
+    df_d = df_view.copy()
+    df_d["statut_score"] = df_d.apply(
+        lambda r: f"✅ {int(r['score'])}/100" if pd.notna(r.get("score")) else
+                  ("✅ Passée IA" if r.get("rejection_category") == "passed_filter_1" else
+                   CATEGORY_LABELS.get(r.get("rejection_category",""), r.get("rejection_category","") or "–")),
+        axis=1
+    )
+    df_d["raison_detaillee"] = df_d.apply(
+        lambda r: r.get("score_raison") or r.get("rejection_reason") or r.get("raison") or "–",
+        axis=1
+    )
+    df_d = df_d[["title","statut_score","raison_detaillee","url"]].copy()
+    df_d.columns = ["Titre","Statut / Score","Analyse / Raison","Lien"]
     st.dataframe(df_d, use_container_width=True, hide_index=True,
         column_config={
-            "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
-            "Titre": st.column_config.TextColumn(width="large"),
+            "Lien":             st.column_config.LinkColumn("Lien", display_text="Voir →"),
+            "Titre":            st.column_config.TextColumn(width="medium"),
+            "Statut / Score":   st.column_config.TextColumn(width="small"),
+            "Analyse / Raison": st.column_config.TextColumn(width="large"),
         })
 
     st.divider()
