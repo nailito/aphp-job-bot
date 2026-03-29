@@ -31,7 +31,7 @@ def load_jobs_to_score() -> list[dict]:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT id, title, metier, filiere, hopital, location,
-                       contrat, teletravail, description
+                       contrat, teletravail, description, url
                 FROM jobs
                 WHERE status = 'active'
                 AND rejection_category = 'passed_filter_1'
@@ -39,7 +39,7 @@ def load_jobs_to_score() -> list[dict]:
             """)
             rows = cur.fetchall()
     cols = ["id","title","metier","filiere","hopital","location",
-            "contrat","teletravail","description"]
+            "contrat","teletravail","description","url"]
     return [dict(zip(cols, r)) for r in rows]
 
 def load_feedbacks() -> list[dict]:
@@ -82,7 +82,8 @@ def build_feedback_examples(feedbacks: list[dict]) -> str:
     return "\n".join(lines) if lines else "Aucun feedback disponible pour l'instant."
 
 def save_score(job_id: str, score: int, priorite: str,
-               raison: str, points_forts: list, points_faibles: list):
+               raison: str, points_forts: list, points_faibles: list,
+               title: str = "", hopital: str = "", location: str = "", url: str = ""):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -103,13 +104,13 @@ def save_score(job_id: str, score: int, priorite: str,
                 """, (f"Score trop bas ({score}/100) : {raison}", job_id))
         conn.commit()
 
-    if score >= 70:
+    if score >= 80:
         from notifier import send_telegram_alert
         send_telegram_alert(
             f"🎯 <b>Nouvelle offre [{priorite}] — {score}/100</b>\n"
-            f"📋 {job.get('title')}\n"
-            f"🏥 {job.get('hopital')} · {job.get('location')}\n"
-            f"🔗 {job.get('url')}"
+            f"📋 {title}\n"
+            f"🏥 {hopital} · {location}\n"
+            f"🔗 {url}"
         )
 
 
@@ -249,7 +250,13 @@ def run_scorer(limit: int = None):
                 if not raison:
                     raison = "Pas de justification fournie"
 
-                save_score(job["id"], score, priorite, raison, pf, pp)
+                save_score(
+                    job["id"], score, priorite, raison, pf, pp,
+                    title=job.get("title", ""),
+                    hopital=job.get("hopital", ""),
+                    location=job.get("location", ""),
+                    url=job.get("url", ""),
+                )
                 scored += 1
                 print(f"    🎯 {priorite} — {score}/100 : {raison[:80]}")
                 if score < 50:
