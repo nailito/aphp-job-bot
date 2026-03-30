@@ -6,9 +6,14 @@ Fetch direct depuis l'API REST WP — aucune base de données requise.
 Lancement : streamlit run explore_hcl.py
 """
 
+import collections
+import json
+import os
 import time
 from html import unescape
 
+import pandas as pd
+import psycopg2
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
@@ -162,10 +167,10 @@ hr { border-color: var(--border); margin: 0.5rem 0; }
 # Constantes API
 # ---------------------------------------------------------------------------
 
-API_BASE    = "https://chu-lyon.nous-recrutons.fr/wp-json/wp/v2"
-JOB_URL     = f"{API_BASE}/job"
-PER_PAGE    = 100
-HEADERS     = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+API_BASE = "https://chu-lyon.nous-recrutons.fr/wp-json/wp/v2"
+JOB_URL  = f"{API_BASE}/job"
+PER_PAGE = 100
+HEADERS  = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
 TAXONOMY_SLUGS = {
     "contrats":    "job_custom_chulyon_typedecontrat",
@@ -200,6 +205,25 @@ def fetch_all_raw() -> list[dict]:
         page += 1
         time.sleep(0.2)
     return all_raw
+
+
+# FIX : charge les décisions IA depuis la DB (sans dépendre de database_hcl)
+@st.cache_data(ttl=300)
+def load_filter_results() -> dict:
+    try:
+        database_url = os.environ.get("DATABASE_URL")
+        if not database_url:
+            return {}
+        conn = psycopg2.connect(database_url)
+        cur = conn.cursor()
+        cur.execute("SELECT id, ai_filter_decision FROM hcl_jobs")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return {row[0]: row[1] for row in rows} if rows else {}
+    except Exception as e:
+        st.warning(f"Impossible de charger les décisions IA : {e}")
+        return {}
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -261,7 +285,6 @@ def load_offers() -> list[dict]:
     """Charge et normalise toutes les offres depuis l'API."""
     raw_list = fetch_all_raw()
 
-    # Charger toutes les taxonomies en une fois
     tax_labels = {
         slug: fetch_taxonomy_labels(slug)
         for slug in TAXONOMY_SLUGS.values()
@@ -271,14 +294,13 @@ def load_offers() -> list[dict]:
     for raw in raw_list:
         meta = raw.get("meta") or {}
 
-        # Taxonomies
         contrat_ids = raw.get(TAXONOMY_SLUGS["contrats"]) or raw.get(TAXONOMY_SLUGS["contrat_alt"]) or []
         hopital_ids = raw.get(TAXONOMY_SLUGS["hopital"]) or []
         filiere_ids = raw.get(TAXONOMY_SLUGS["filiere"]) or []
 
-        contrats  = resolve_ids(contrat_ids, tax_labels[TAXONOMY_SLUGS["contrats"]])
-        hopitaux  = resolve_ids(hopital_ids, tax_labels[TAXONOMY_SLUGS["hopital"]])
-        filieres  = resolve_ids(filiere_ids, tax_labels[TAXONOMY_SLUGS["filiere"]])
+        contrats = resolve_ids(contrat_ids, tax_labels[TAXONOMY_SLUGS["contrats"]])
+        hopitaux = resolve_ids(hopital_ids, tax_labels[TAXONOMY_SLUGS["hopital"]])
+        filieres = resolve_ids(filiere_ids, tax_labels[TAXONOMY_SLUGS["filiere"]])
 
         duree      = str(meta.get("job_offer_duration") or "").strip()
         date_debut = str(meta.get("job_creation_date") or "").strip()
@@ -297,7 +319,7 @@ def load_offers() -> list[dict]:
             "date_debut":  date_debut if date_debut and date_debut != "0" else "",
             "date_pub":    date_pub,
             "description": description,
-            "_raw":        raw,  # champ caché pour debug
+            "_raw":        raw,
         })
 
     return offers
@@ -309,6 +331,11 @@ def load_offers() -> list[dict]:
 
 with st.spinner("⏳ Chargement des offres HCL depuis l'API…"):
     offers = load_offers()
+    filter_map = load_filter_results()
+
+# FIX : injecter la décision IA dans chaque offre (pas de conn/get_active_offers)
+for o in offers:
+    o["ai_filter_decision"] = filter_map.get(o["id"])
 
 # ---------------------------------------------------------------------------
 # Sidebar — filtres
@@ -316,7 +343,14 @@ with st.spinner("⏳ Chargement des offres HCL depuis l'API…"):
 
 with st.sidebar:
     st.markdown("## 🏥 HCL · Explorer")
-    st.markdown(f"<div style='color:#6b7280;font-size:.75rem;margin-bottom:1rem'>{len(offers)} offres chargées · cache 30min</div>", unsafe_allow_html=True)
+
+    only_validated = st.checkbox("Seulement validées par IA", value=False)
+
+    st.markdown(
+        f"<div style='color:#6b7280;font-size:.75rem;margin-bottom:1rem'>"
+        f"{len(offers)} offres chargées · cache 30min</div>",
+        unsafe_allow_html=True,
+    )
 
     if st.button("🔄 Rafraîchir les données", use_container_width=True):
         st.cache_data.clear()
@@ -328,10 +362,9 @@ with st.sidebar:
 
     st.markdown('<div class="section-title">Filtres</div>', unsafe_allow_html=True)
 
-    # Extraire les valeurs uniques pour les filtres
-    all_contrats  = sorted({c for o in offers for c in o["contrats"]})
-    all_hopitaux  = sorted({h for o in offers for h in o["hopitaux"]})
-    all_filieres  = sorted({f for o in offers for f in o["filieres"]})
+    all_contrats = sorted({c for o in offers for c in o["contrats"]})
+    all_hopitaux = sorted({h for o in offers for h in o["hopitaux"]})
+    all_filieres = sorted({f for o in offers for f in o["filieres"]})
 
     sel_contrats = st.multiselect("Type de contrat", all_contrats)
     sel_hopitaux = st.multiselect("Hôpital / site", all_hopitaux)
@@ -348,14 +381,12 @@ with st.sidebar:
     per_page_ui = st.select_slider("Offres par page", options=[10, 25, 50, 100], value=25)
 
 # ---------------------------------------------------------------------------
-# Filtrage
+# Filtrage — FIX : search intégré dans matches()
 # ---------------------------------------------------------------------------
 
 def matches(offer: dict) -> bool:
-    if search:
-        needle = search.lower()
-        if needle not in offer["titre"].lower() and needle not in offer["description"].lower():
-            return False
+    if only_validated and offer.get("ai_filter_decision") != "pass":
+        return False
     if sel_contrats and not any(c in offer["contrats"] for c in sel_contrats):
         return False
     if sel_hopitaux and not any(h in offer["hopitaux"] for h in sel_hopitaux):
@@ -364,21 +395,25 @@ def matches(offer: dict) -> bool:
         return False
     if has_desc and not offer["description"].strip():
         return False
+    # FIX : appliquer la recherche texte
+    if search:
+        q = search.lower()
+        if q not in offer["titre"].lower() and q not in offer["description"].lower():
+            return False
     return True
 
 filtered = [o for o in offers if matches(o)]
 
 # ---------------------------------------------------------------------------
-# Header
+# Header + KPI
 # ---------------------------------------------------------------------------
 
 st.markdown("## Exploration des offres HCL")
 
-# KPI cards
 contrats_set = {c for o in offers for c in o["contrats"]}
 hopitaux_set = {h for o in offers for h in o["hopitaux"]}
 filieres_set = {f for o in offers for f in o["filieres"]}
-with_desc = sum(1 for o in offers if o["description"].strip())
+with_desc    = sum(1 for o in offers if o["description"].strip())
 
 st.markdown(f"""
 <div class="kpi-row">
@@ -414,33 +449,30 @@ st.markdown(f"""
 # ---------------------------------------------------------------------------
 
 with st.expander("📊 Distributions", expanded=False):
-    import collections
-
     col1, col2, col3 = st.columns(3)
+
+    cnt_contrat = collections.Counter(c for o in filtered for c in (o["contrats"] or ["Non précisé"]))
+    cnt_fil     = collections.Counter(f for o in filtered for f in (o["filieres"] or ["Non précisé"]))
+    cnt_hop     = collections.Counter(h for o in filtered for h in (o["hopitaux"] or ["Non précisé"]))
 
     with col1:
         st.markdown("**Par type de contrat**")
-        cnt_contrat = collections.Counter(c for o in filtered for c in (o["contrats"] or ["Non précisé"]))
         if cnt_contrat:
-            import pandas as pd
             df_c = pd.DataFrame(cnt_contrat.most_common(15), columns=["Contrat", "Nb"])
             st.bar_chart(df_c.set_index("Contrat"), use_container_width=True, height=250)
 
     with col2:
         st.markdown("**Par filière (top 15)**")
-        cnt_fil = collections.Counter(f for o in filtered for f in (o["filieres"] or ["Non précisé"]))
         if cnt_fil:
             df_f = pd.DataFrame(cnt_fil.most_common(15), columns=["Filière", "Nb"])
             st.bar_chart(df_f.set_index("Filière"), use_container_width=True, height=250)
 
     with col3:
         st.markdown("**Par hôpital (top 15)**")
-        cnt_hop = collections.Counter(h for o in filtered for h in (o["hopitaux"] or ["Non précisé"]))
         if cnt_hop:
             df_h = pd.DataFrame(cnt_hop.most_common(15), columns=["Hôpital", "Nb"])
             st.bar_chart(df_h.set_index("Hôpital"), use_container_width=True, height=250)
 
-    # Valeurs brutes pour construire les filtres
     st.markdown("---")
     st.markdown("**Toutes les valeurs disponibles**")
     c1, c2, c3 = st.columns(3)
@@ -461,13 +493,13 @@ with st.expander("📊 Distributions", expanded=False):
 # Pagination
 # ---------------------------------------------------------------------------
 
-st.markdown(f"<div style='color:#6b7280;font-size:.8rem;margin:.5rem 0'>{len(filtered)} offres · page </div>", unsafe_allow_html=True)
+st.markdown(
+    f"<div style='color:#6b7280;font-size:.8rem;margin:.5rem 0'>{len(filtered)} offres</div>",
+    unsafe_allow_html=True,
+)
 
 n_pages = max(1, (len(filtered) + per_page_ui - 1) // per_page_ui)
-if n_pages > 1:
-    page_num = st.number_input("Page", min_value=1, max_value=n_pages, value=1, step=1, label_visibility="collapsed")
-else:
-    page_num = 1
+page_num = st.number_input("Page", min_value=1, max_value=n_pages, value=1, step=1, label_visibility="collapsed") if n_pages > 1 else 1
 
 page_offers = filtered[(page_num - 1) * per_page_ui : page_num * per_page_ui]
 
@@ -483,7 +515,6 @@ def render_badge(text: str, cls: str) -> str:
 
 for offer in page_offers:
     badges_html = '<div class="badges">'
-
     for c in offer["contrats"]:
         badges_html += render_badge(c, "badge-contrat")
     for h in offer["hopitaux"]:
@@ -496,9 +527,12 @@ for offer in page_offers:
         badges_html += render_badge(f"📅 {offer['date_pub']}", "badge-date")
     if offer["date_debut"] and offer["date_debut"] != "0":
         badges_html += render_badge(f"🚀 Début: {offer['date_debut']}", "badge-date")
+    if offer.get("ai_filter_decision") == "pass":
+        badges_html += render_badge("✅ IA OK", "badge-filiere")
+    elif offer.get("ai_filter_decision") == "reject":
+        badges_html += render_badge("❌ IA NO", "badge-duree")
     badges_html += '</div>'
 
-    # Description selon mode
     desc = offer["description"]
     if desc_mode == "Aperçu (3 lignes)":
         preview_lines = [l for l in desc.splitlines() if l.strip()][:3]
@@ -520,15 +554,12 @@ for offer in page_offers:
 </div>
 """, unsafe_allow_html=True)
 
-    # Bouton "voir tout" pour le mode aperçu
     if desc_mode == "Aperçu (3 lignes)" and desc:
         with st.expander("📄 Description complète"):
             st.markdown(f'<div class="desc-full">{desc}</div>', unsafe_allow_html=True)
 
-    # JSON brut debug
     if show_raw:
         with st.expander(f"🔧 JSON brut #{offer['id']}"):
-            import json
             raw_display = {k: v for k, v in offer["_raw"].items() if k != "_raw"}
             st.markdown(f'<div class="raw-json">{json.dumps(raw_display, ensure_ascii=False, indent=2)}</div>', unsafe_allow_html=True)
 
@@ -537,4 +568,7 @@ for offer in page_offers:
 # ---------------------------------------------------------------------------
 
 if n_pages > 1:
-    st.markdown(f"<div style='text-align:center;color:#6b7280;font-size:.8rem;margin-top:1rem'>Page {page_num} / {n_pages}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='text-align:center;color:#6b7280;font-size:.8rem;margin-top:1rem'>Page {page_num} / {n_pages}</div>",
+        unsafe_allow_html=True,
+    )
