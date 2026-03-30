@@ -215,7 +215,7 @@ if page == "📊 Tableau de bord":
             )
             if not runs.empty:
                 last        = runs.iloc[0]
-                run_date_str = last["run_date"][:16].replace("T", " ")
+                run_date_str = str(last["run_date"])[:16].replace("T", " ") if last["run_date"] is not None else "–"
                 date_fmt     = run_date_str[:10].replace("-", "/")
                 heure_fmt    = run_date_str[11:16].replace(":", "h")
                 is_ok        = str(last["status"]).startswith("success") or last["status"] == "no_new_offers"
@@ -543,7 +543,7 @@ elif page == "📰 Rapport du jour":
     last = runs.iloc[0]
 
     if source == "APHP":
-        run_date    = last["run_date"][:10]
+        run_date = str(last["run_date"])[:10] if last["run_date"] is not None else "–"
         n_new_last  = last["n_new"]
         n_scr_last  = last["n_scraped"]
         n_rem_last  = last["n_removed"]
