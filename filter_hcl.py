@@ -149,22 +149,18 @@ def _reject_paramedical(job: dict) -> tuple[str, str] | None:
     return None
 
 
-def _reject_filiere(job: dict) -> tuple[str, str] | None:
+def _reject_title(job: dict) -> tuple[str, str] | None:
     """
-    Retourne (categorie, raison) si la filière stockée est dans
-    la liste de rejet, None sinon.
-    Note : le champ 'filiere' n'est pas encore stocké en base —
-    ce filtre sera actif une fois la colonne ajoutée.
+    Retourne (categorie, raison) si le titre contient un mot-clé
+    de niveau insuffisant, None sinon.
     """
-    filiere = str(job.get("filiere") or "").strip()
-    if not filiere:
-        return None
-    for f in REJECT_FILIERES:
-        if f.lower() in filiere.lower():
-            return (
-                "diplome_paramedical",
-                f"Auto-reject filière : '{filiere}'",
-            )
+    title = _text(job, "titre")
+    kw = _check_keywords(title, REJECT_TITLE_KEYWORDS)
+    if kw:
+        return (
+            "niveau_insuffisant",
+            f"Auto-reject titre : '{kw}' détecté",
+        )
     return None
 
 
