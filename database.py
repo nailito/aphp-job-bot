@@ -1,13 +1,12 @@
 import os
 import json
-import psycopg2
-import psycopg2.extras
+import psycopg as psycopg2
 from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+    return psycopg2.connect(DATABASE_URL + "?sslmode=require")
 
 def init_db():
     with get_connection() as conn:
