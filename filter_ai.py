@@ -10,9 +10,6 @@ from datetime import datetime, timezone, timedelta
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-# ─────────────────────────
-# TELEGRAM (AJOUT UNIQUEMENT)
-# ─────────────────────────
 def notify(msg):
     print(msg)
     try:
