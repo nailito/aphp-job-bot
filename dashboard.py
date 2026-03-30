@@ -1,7 +1,7 @@
 #dashboard.py
 import json
 import os
-import psycopg2cffi as psycopg2
+import psycopg2
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
