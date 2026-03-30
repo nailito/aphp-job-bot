@@ -220,13 +220,14 @@ def parse_offer(
     date_debut = str(meta.get("job_creation_date") or "").strip()
 
     # --- Description (uniquement pour les nouvelles offres)
+    # parse_offer() — remplacer le bloc description
+
+    # --- Description (uniquement pour les nouvelles offres)
     if offer_id not in known_ids:
         description = build_description(raw)
-        # Si une filière est trouvée, on l'ajoute en tête pour le scoring IA
-        if filiere:
-            description = f"Filière : {filiere}\n\n{description}"
+        # SUPPRIMÉ : l'injection "Filière : {filiere}\n\n" dans la description
     else:
-        description = None  # déjà en base, pas besoin de re-fetcher
+        description = None
 
     return {
         "id": offer_id,
@@ -234,6 +235,7 @@ def parse_offer(
         "url": url,
         "localisation": localisation,
         "contrats": contrats,
+        "filiere": filiere,         
         "duree": duree,
         "date_debut": date_debut,
         "description": description,

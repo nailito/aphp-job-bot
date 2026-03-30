@@ -121,18 +121,16 @@ def _auto_pass(job: dict) -> str | None:
     return None
 
 
-def _reject_title(job: dict) -> tuple[str, str] | None:
-    """
-    Retourne (categorie, raison) si le titre contient un mot-clé
-    de poste trop bas niveau, None sinon.
-    """
-    title = _text(job, "titre")
-    kw = _check_keywords(title, REJECT_TITLE_KEYWORDS)
-    if kw:
-        return (
-            "surqualification",
-            f"Auto-reject titre : poste de niveau insuffisant ('{kw}')",
-        )
+def _reject_filiere(job: dict) -> tuple[str, str] | None:
+    filiere = str(job.get("filiere") or "").strip()   # ← champ natif, rien à parser
+    if not filiere:
+        return None
+    for f in REJECT_FILIERES:
+        if f.lower() in filiere.lower():
+            return (
+                "diplome_paramedical",
+                f"Auto-reject filière : '{filiere}'",
+            )
     return None
 
 
