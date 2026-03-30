@@ -102,16 +102,15 @@ def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
             oid = offer["id"]
 
             if oid not in known:
-                # Nouvelle offre
                 cur.execute("""
                     INSERT INTO hcl_jobs (
                         id, titre, url, localisation, contrats,
-                        duree, date_debut, description,
+                        filiere, duree, date_debut, description,
                         status, miss_count,
                         first_seen_at, last_seen_at
                     ) VALUES (
                         %(id)s, %(titre)s, %(url)s, %(localisation)s, %(contrats)s,
-                        %(duree)s, %(date_debut)s, %(description)s,
+                        %(filiere)s, %(duree)s, %(date_debut)s, %(description)s,
                         'active', 0,
                         %(now)s, %(now)s
                     )
@@ -132,6 +131,7 @@ def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
                             url = %(url)s,
                             localisation = %(localisation)s,
                             contrats = %(contrats)s,
+                            filiere = %(filiere)s,
                             duree = %(duree)s,
                             date_debut = %(date_debut)s,
                             description = %(description)s,
@@ -147,6 +147,7 @@ def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
                             url = %(url)s,
                             localisation = %(localisation)s,
                             contrats = %(contrats)s,
+                            filiere = %(filiere)s,
                             duree = %(duree)s,
                             date_debut = %(date_debut)s,
                             status = 'active',
