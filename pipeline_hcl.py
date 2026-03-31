@@ -207,7 +207,7 @@ def run_pipeline():
             return run_scorer(conn)
 
         try:
-            scoring_enabled = False  # toggle facile
+            scoring_enabled = True  # toggle facile
 
             if scoring_enabled:
                 scoring_stats, err = safe_step("SCORING", step_scoring)

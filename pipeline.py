@@ -46,8 +46,6 @@ def get_counts(new_ids: set):
 
     return passed_ai, rej_ai, scored
 
-    return passed_ai, rej_ai, scored
-
 def run_pipeline():
     notify(f"🚀 Pipeline lancé — {datetime.now().strftime('%H:%M')}")
     print("=" * 60)
