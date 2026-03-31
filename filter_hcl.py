@@ -164,7 +164,7 @@ REJECT_TITLE_KEYWORDS = [
     "secrétaire médical", "secrétaire médicale",
 ]
 
-# Uniquement des diplômes ou certifications paramédicaux stricts.
+# Diplômes ou certifications paramédicaux stricts.
 # NE PAS mettre de noms de métiers/filières ici (risque de faux positifs
 # sur des offres d'ingénieur qui mentionnent ces métiers comme interlocuteurs).
 REJECT_PARAMEDICAL_KEYWORDS = [
@@ -190,6 +190,16 @@ REJECT_PARAMEDICAL_KEYWORDS = [
     "electroradiologie", "électroradiologie",
     # Cadre de santé
     "diplôme de cadre de santé", "diplome de cadre de sante",
+]
+
+# Niveaux de diplôme explicitement trop bas pour un ingénieur Bac+5.
+# Si une offre liste l'un de ces niveaux comme prérequis, elle n'est pas adaptée.
+REJECT_DIPLOMA_LEVEL_KEYWORDS = [
+    "bac+2", "bac +2", "bac + 2",
+    "bac+3", "bac +3", "bac + 3",
+    "dut", "bts",
+    "bac pro", "bac pro assp", "bac pro sapat",
+    "licence professionnelle",
 ]
 
 REJECT_FILIERES = [
@@ -273,6 +283,19 @@ def _reject_paramedical(job: dict) -> tuple[str, str] | None:
     return None
 
 
+def _reject_diploma_level(job: dict) -> tuple[str, str] | None:
+    # Si l'offre mentionne explicitement un niveau de diplôme trop bas,
+    # elle n'est pas adaptée à un ingénieur Bac+5.
+    text = _text(job, "titre", "description")
+    kw = _check_keywords(text, REJECT_DIPLOMA_LEVEL_KEYWORDS)
+    if kw:
+        return (
+            "surqualification",
+            f"Auto-reject niveau diplôme : '{kw}' mentionné comme prérequis",
+        )
+    return None
+
+
 def _reject_title(job: dict) -> tuple[str, str] | None:
     title = _text(job, "titre")
     kw = _check_keywords(title, REJECT_TITLE_KEYWORDS)
@@ -341,7 +364,16 @@ def run_filter(conn, limit: int = None) -> dict:
                 logger.debug(f"  ❌ Paramédical [{job_id}] {titre} — {reason}")
                 continue
 
-            # ── 4. Reject filière
+            # ── 4. Reject niveau de diplôme trop bas (BTS, DUT, Bac+2, Bac+3...)
+            result = _reject_diploma_level(job)
+            if result:
+                cat, reason = result
+                update_ai_filter(conn, job_id, "reject", reason)
+                stats["rejected"] += 1
+                logger.debug(f"  ❌ Niveau diplôme [{job_id}] {titre} — {reason}")
+                continue
+
+            # ── 5. Reject filière
             result = _reject_filiere(job)
             if result:
                 cat, reason = result
@@ -350,7 +382,7 @@ def run_filter(conn, limit: int = None) -> dict:
                 logger.debug(f"  ❌ Filière [{job_id}] {titre} — {reason}")
                 continue
 
-            # ── 5. Auto-pass Bac+5 (après tous les rejets)
+            # ── 6. Auto-pass Bac+5 (après tous les rejets)
             reason = _auto_pass(job)
             if reason:
                 update_ai_filter(conn, job_id, "pass", reason)
@@ -358,7 +390,7 @@ def run_filter(conn, limit: int = None) -> dict:
                 logger.debug(f"  ✅ Auto-pass [{job_id}] {titre} — {reason}")
                 continue
 
-            # ── 6. Filtre IA
+            # ── 7. Filtre IA
             if groq_client and not daily_limit_hit:
                 try:
                     decision, categorie, raison = _ai_filter(job, groq_client)
