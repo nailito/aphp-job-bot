@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import psycopg as psycopg2
-import psycopg as psycopg2.extras
 
 logger = logging.getLogger(__name__)
 

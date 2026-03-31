@@ -578,7 +578,10 @@ elif page == "📰 Rapport du jour":
     st.divider()
 
     # ── Offres du dernier run
-    ref_date = pd.Timestamp(run_date).date()
+    try:
+        ref_date = pd.Timestamp(run_date).date()
+    except Exception:
+        ref_date = datetime.now().date()
     df_nouvelles = df_active[df_active["first_seen"].dt.date == ref_date].copy()
 
     if not df_nouvelles.empty:

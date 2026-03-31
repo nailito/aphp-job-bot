@@ -18,7 +18,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 # PROMPT IA
 # ─────────────────────────────────────────────
 
-PROMPT_TEMPLATE = """Tu es un assistant de recrutement. Analyse cette offre d'emploi hospitalière selon les règles ci-dessous.
+PROMPT_TEMPLATE = """Tu es un assistant de recrutement pour les Hospices Civiles de Lyon. Analyse cette offre d'emploi hospitalière selon les règles ci-dessous.
 
 ## OFFRE
 Titre       : {titre}
@@ -27,35 +27,44 @@ Description : {description}
 
 ## RÈGLES (dans cet ordre strict)
 
-### RÈGLE 1 — REJET : DIPLÔME PARAMÉDICAL OBLIGATOIRE
-Si l'offre exige comme condition absolue un diplôme paramédical ou médical :
-diplôme d'État infirmier, DEI, IBODE, IADE, sage-femme, aide-soignant,
-cadre de santé, auxiliaire de puériculture, DTS manipulateur, électroradiologie...
-→ resultat = "reject", categorie = "diplome_paramedical"
+### RÈGLE 1 — REJET DIPLÔME PARAMÉDICAL
+Si l'offre exige un diplôme paramédical ou médical comme condition obligatoire :
+diplôme d'État infirmier, DEI, IBODE, IADE, sage-femme, aide-soignant, cadre de santé,
+auxiliaire de puériculture, DTS manipulateur, électroradiologie...
+→ résultat = "reject", categorie = "diplome_paramedical"
 
-Important : un poste technique (électricien, technicien) dans un hôpital
-n'est PAS un poste paramédical — c'est un poste de niveau insuffisant (règle 2).
+IMPORTANT : Le fait qu'un poste soit dans un hôpital ou un service technique
+hospitalier NE signifie PAS que c'est un poste paramédical. Un électricien,
+plombier, technicien de maintenance dans un hôpital = surqualification (Règle 2),
+pas diplôme paramédical.
 
 ### RÈGLE 2 — REJET : POSTE TROP BAS NIVEAU POUR UN BAC+5
-Rejeter si le poste vise clairement un niveau CAP/BEP/Bac/Bac+2/Bac+3 :
-- Technique opérationnel sans encadrement : électricien, plombier, cuisinier,
-  technicien de maintenance, agent logistique, brancardier, agent de stérilisation
-- Administratif d'exécution : secrétaire médical, standardiste, agent d'accueil,
+Rejeter si le poste est clairement destiné à un niveau CAP/BEP/Bac/Bac+2 :
+- Poste technique opérationnel sans encadrement : électricien, plombier,
+  magasinier, agent logistique, technicien de maintenance, cuisinier,
+  agent de restauration, brancardier, agent de stérilisation
+- Poste administratif d'exécution : secrétaire, standardiste, agent d'accueil,
   agent de facturation, gestionnaire de stocks
-→ resultat = "reject", categorie = "surqualification"
+- Le niveau de diplôme requis est CAP, BEP, Bac, Bac pro, BTS, DUT, Bac+2, Bac+3
 
-### RÈGLE 3 — PASSAGE : POSTE TYPIQUEMENT BAC+5
-Si les règles 1 et 2 ne s'appliquent pas, le poste est-il typiquement occupé
-par un ingénieur, un master ou un diplômé de grande école ?
+→ résultat = "reject", categorie = "surqualification",
+  raison = "Candidat surqualifié : poste de niveau [CAP/Bac/Bac+2] pour un ingénieur Bac+5"
 
-→ "pass" si :
-✅ Ingénieur (biomédical, qualité, SI, data, méthodes...)
+### RÈGLE 3 — WHITELIST : POSTE TYPIQUEMENT OCCUPÉ PAR UN BAC+5
+Si les règles 1 et 2 ne s'appliquent pas, vérifie si le poste est typiquement
+occupé par quelqu'un issu d'une école d'ingénieur ou de commerce Bac+5 (master, doctorat).
+
+→ "pass" si le poste correspond à l'un de ces profils :
+✅ Ingénieur (toute spécialité : biomédical, méthodes, qualité, SI, data...)
 ✅ Cadre administratif, chargé de mission, chef de projet
-✅ Contrôleur de gestion, analyste financier, acheteur
-✅ Data analyst, statisticien, biostatisticien, chercheur
-✅ Responsable de service, directeur adjoint, manager
+✅ Contrôleur de gestion, analyste financier, acheteur senior
+✅ Data analyst, statisticien, chercheur, biostatisticien
+✅ Consultant, manager, directeur adjoint, responsable de service
+✅ Tout poste où une grande école ou un master est la norme du secteur
 
-→ "reject" si poste typiquement occupé par un Bac ou BTS
+→ "reject" si le poste est typiquement occupé par un Bac, BTS ou DUT :
+technicien, opérateur, agent, magasinier, électricien, cuisinier...
+→ "reject" si le poste est pour un profil en droit, en enseignement ou en ressources humaines
 
 En cas de doute → "pass"
 
@@ -142,7 +151,7 @@ PASS_KEYWORDS = [
     "grande école", "grande ecole",
     "école de commerce", "ecole de commerce",
     "master", "msc", "doctorat", "phd", "ph.d",
-    "niveau 7", "niveau i", "niveau ii",
+    "niveau 7", "niveau ii",
     "formation bac+5", "niveau ingénieur",
 ]
 
@@ -340,26 +349,25 @@ def run_filter(conn, limit: int = None) -> dict:
                         stats["ai_rejected"] += 1
                         logger.debug(f"  ❌ IA [{job_id}] {titre} — {raison}")
                     elif decision == "error":
-                        # Fallback pass sur erreur unitaire
-                        update_ai_filter(conn, job_id, "pass", f"Erreur IA — fallback pass : {raison}")
-                        stats["fallback_passed"] += 1
+                        # On ne touche pas à l'offre — elle reste NULL et sera reprise à la prochaine run
                         stats["ai_errors"] += 1
+                        logger.debug(f"  ⏳ IA error [{job_id}] {titre} — laissé à trier")
                     else:
                         update_ai_filter(conn, job_id, "pass", raison)
                         stats["ai_passed"] += 1
                         logger.debug(f"  ✅ IA [{job_id}] {titre} — {raison}")
 
+                # APRÈS
                 except RuntimeError as e:
-                    # Limite journalière → on bascule tous les restants en fallback
                     logger.error(f"Limite Groq TPD : {e}")
                     daily_limit_hit = True
-                    update_ai_filter(conn, job_id, "pass", "Limite Groq — fallback pass")
-                    stats["fallback_passed"] += 1
+                    # On ne touche pas — sera repris à la prochaine run
+                    logger.info(f"  ⏳ [{job_id}] laissé à trier (limite Groq journalière)")
 
-            else:
-                # Pas de client IA ou limite atteinte → fallback pass
-                update_ai_filter(conn, job_id, "pass", "Filtre IA indisponible — passage par défaut")
-                stats["fallback_passed"] += 1
+            # APRÈS
+                else:
+                    # IA indisponible ou limite atteinte — on laisse à trier
+                    logger.debug(f"  ⏳ [{job_id}] laissé à trier (IA indisponible)")
 
         except Exception as e:
             logger.error(f"  ⚠️  Erreur sur job {job_id} : {e}")

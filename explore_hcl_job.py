@@ -539,12 +539,7 @@ for offer in page_offers:
     ai_reason = offer.get("ai_filter_reason") or ""
     if ai_reason and offer.get("ai_filter_decision"):
         color = "#4ade80" if offer["ai_filter_decision"] == "pass" else "#fbbf24"
-        ai_reason_html = f"""
-        <div style="font-size:0.72rem;color:{color};margin-top:0.4rem;
-                    padding:0.3rem 0.6rem;background:rgba(255,255,255,0.04);
-                    border-radius:6px;border-left:2px solid {color}">
-          🤖 {ai_reason}
-        </div>"""
+        ai_reason_html = f'<div style="font-size:0.72rem;color:{color};margin-top:0.4rem;padding:0.3rem 0.6rem;background:rgba(255,255,255,0.04);border-radius:6px;border-left:2px solid {color}">🤖 {ai_reason}</div>'""
 
     desc = offer["description"]
     if desc_mode == "Aperçu (3 lignes)":
@@ -563,6 +558,7 @@ for offer in page_offers:
     <a href="{offer['url']}" target="_blank">{offer['titre']}</a>
   </div>
   {badges_html}
+  {ai_reason_html}
   {desc_html}
 </div>
 """, unsafe_allow_html=True)
