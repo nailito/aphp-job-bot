@@ -1,8 +1,9 @@
+#filtre APHP
 import json
 import re
 import time
 import os
-import psycopg2
+import psycopg as psycopg2
 from groq import Groq
 from config import GROQ_API_KEY
 from tqdm import tqdm

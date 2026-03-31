@@ -15,7 +15,7 @@ import time
 import logging
 from datetime import datetime
 
-import psycopg2
+import psycopg as psycopg2
 
 
 # ─────────────────────────────────────────────

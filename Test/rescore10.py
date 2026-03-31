@@ -1,5 +1,5 @@
 # rescore_top10.py
-import psycopg2
+import psycopg as psycopg2
 import os
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")

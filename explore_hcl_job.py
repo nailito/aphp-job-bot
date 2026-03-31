@@ -13,7 +13,7 @@ import time
 from html import unescape
 
 import pandas as pd
-import psycopg2
+import psycopg as psycopg2
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup

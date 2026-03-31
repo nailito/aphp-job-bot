@@ -1,27 +1,133 @@
 """
 filter_hcl.py
-Filtrage des offres HCL — étape 1.
-
-Architecture :
-  run_filter(conn) → dict de stats
-
-Filtres appliqués dans cet ordre :
-  1. Auto-pass  — mots-clés Bac+5 dans titre ou description
-  2. Auto-reject — mots-clés de niveau insuffisant dans le titre
-  3. Auto-reject — filières paramédicales / médicales dans le titre ou description
-  [Slot IA — à implémenter plus tard]
-  4. Fallback   — tout ce qui reste passe par défaut
-
-Conventions database_hcl :
-  - update_ai_filter(conn, job_id, decision, reason)
-  - decision : 'pass' | 'reject'
 """
 
 import logging
 from tqdm import tqdm
 from database_hcl import get_offers_to_filter, update_ai_filter
-
 logger = logging.getLogger(__name__)
+import json
+import re
+import time
+import os
+from groq import Groq
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
+# ─────────────────────────────────────────────
+# PROMPT IA
+# ─────────────────────────────────────────────
+
+PROMPT_TEMPLATE = """Tu es un assistant de recrutement. Analyse cette offre d'emploi hospitalière selon les règles ci-dessous.
+
+## OFFRE
+Titre       : {titre}
+Filière HCL : {filiere}
+Description : {description}
+
+## RÈGLES (dans cet ordre strict)
+
+### RÈGLE 1 — REJET : DIPLÔME PARAMÉDICAL OBLIGATOIRE
+Si l'offre exige comme condition absolue un diplôme paramédical ou médical :
+diplôme d'État infirmier, DEI, IBODE, IADE, sage-femme, aide-soignant,
+cadre de santé, auxiliaire de puériculture, DTS manipulateur, électroradiologie...
+→ resultat = "reject", categorie = "diplome_paramedical"
+
+Important : un poste technique (électricien, technicien) dans un hôpital
+n'est PAS un poste paramédical — c'est un poste de niveau insuffisant (règle 2).
+
+### RÈGLE 2 — REJET : POSTE TROP BAS NIVEAU POUR UN BAC+5
+Rejeter si le poste vise clairement un niveau CAP/BEP/Bac/Bac+2/Bac+3 :
+- Technique opérationnel sans encadrement : électricien, plombier, cuisinier,
+  technicien de maintenance, agent logistique, brancardier, agent de stérilisation
+- Administratif d'exécution : secrétaire médical, standardiste, agent d'accueil,
+  agent de facturation, gestionnaire de stocks
+→ resultat = "reject", categorie = "surqualification"
+
+### RÈGLE 3 — PASSAGE : POSTE TYPIQUEMENT BAC+5
+Si les règles 1 et 2 ne s'appliquent pas, le poste est-il typiquement occupé
+par un ingénieur, un master ou un diplômé de grande école ?
+
+→ "pass" si :
+✅ Ingénieur (biomédical, qualité, SI, data, méthodes...)
+✅ Cadre administratif, chargé de mission, chef de projet
+✅ Contrôleur de gestion, analyste financier, acheteur
+✅ Data analyst, statisticien, biostatisticien, chercheur
+✅ Responsable de service, directeur adjoint, manager
+
+→ "reject" si poste typiquement occupé par un Bac ou BTS
+
+En cas de doute → "pass"
+
+## FORMAT DE RÉPONSE
+Réponds UNIQUEMENT avec le JSON, sans texte avant ou après.
+{{
+  "resultat": "pass" | "reject",
+  "categorie": "diplome_paramedical" | "surqualification" | null,
+  "raison": "<1 phrase obligatoire>"
+}}
+"""
+
+
+# ─────────────────────────────────────────────
+# FILTRE IA
+# ─────────────────────────────────────────────
+
+def _ai_filter(job: dict, client: Groq) -> tuple[str, str | None, str]:
+    """
+    Appelle le LLM pour analyser un job ambigu.
+
+    Returns:
+        (decision, categorie, raison)
+        decision   : "pass" | "reject" | "error"
+        categorie  : "diplome_paramedical" | "surqualification" | None
+        raison     : explication lisible
+    """
+    prompt = PROMPT_TEMPLATE.format(
+        titre=job.get("titre", ""),
+        filiere=job.get("filiere", ""),
+        description=(job.get("description") or "")[:1500],
+    )
+
+    for attempt in range(4):
+        try:
+            response = client.chat.completions.create(
+                model="moonshotai/kimi-k2-instruct",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=300,
+            )
+            raw = response.choices[0].message.content.strip()
+
+            # Extraction robuste du JSON
+            match = re.search(r'\{[^{}]*"resultat"[^{}]*\}', raw, re.DOTALL)
+            if not match:
+                match = re.search(r'\{.*\}', raw, re.DOTALL)
+            if not match:
+                raise ValueError(f"Pas de JSON trouvé : {raw[:80]}")
+
+            result = json.loads(match.group(0))
+            raison = result.get("raison", "").strip() or "Pas de raison fournie"
+            decision = result.get("resultat", "pass")
+            categorie = result.get("categorie")
+
+            return decision, categorie, raison
+
+        except Exception as e:
+            err_str = str(e)
+            logger.warning(f"    Tentative {attempt+1}/4 échouée : {err_str[:80]}")
+
+            if "429" in err_str or "rate_limit" in err_str:
+                if "per day" in err_str or "TPD" in err_str:
+                    # Limite journalière atteinte → on laisse remonter
+                    raise RuntimeError(f"Limite journalière Groq atteinte : {err_str}") from e
+                wait = 60 if attempt < 2 else 120
+                logger.info(f"    Rate limit minute — pause {wait}s")
+                time.sleep(wait)
+            else:
+                break  # Erreur non-retry → fallback
+
+    return "error", None, "Erreur LLM — passage par défaut"
+
 
 
 # ─────────────────────────────────────────────
@@ -158,44 +264,36 @@ def _reject_title(job: dict) -> tuple[str, str] | None:
     kw = _check_keywords(title, REJECT_TITLE_KEYWORDS)
     if kw:
         return (
-            "niveau_insuffisant",
+            "surqualification",
             f"Auto-reject titre : '{kw}' détecté",
         )
     return None
 
-
-# ─────────────────────────────────────────────
-# POINT D'ENTRÉE
-# ─────────────────────────────────────────────
-
 def run_filter(conn, limit: int = None) -> dict:
-    """
-    Filtre les offres HCL actives sans décision IA.
+    groq_client = None
+    if GROQ_API_KEY:
+        groq_client = Groq(api_key=GROQ_API_KEY)
+    else:
+        logger.warning("GROQ_API_KEY absente — filtre IA désactivé, fallback pass pour tous")
 
-    Args:
-        conn    : connexion psycopg2 (fournie par le pipeline)
-        limit   : nb max d'offres à traiter (debug)
-
-    Returns:
-        dict : { total, auto_passed, rejected, fallback_passed, errors }
-    """
     jobs = get_offers_to_filter(conn)
     if limit:
         jobs = jobs[:limit]
-
     total = len(jobs)
-    logger.info(f"Filtre HCL manuel — {total} offres à traiter")
-    print(f"\n🔍 Filtre HCL — {total} offres à analyser...")
 
     stats = {
-        "total": total,
         "auto_passed": 0,
-        "rejected": 0,
         "fallback_passed": 0,
+        "rejected": 0,
         "errors": 0,
+        "ai_passed": 0,
+        "ai_rejected": 0,
+        "ai_errors": 0,
     }
 
-    for job in tqdm(jobs, desc="Filtre manuel HCL"):
+    daily_limit_hit = False
+
+    for job in tqdm(jobs, desc="Filtre HCL"):
         job_id = job["id"]
         titre = job.get("titre", "")[:60]
 
@@ -205,16 +303,14 @@ def run_filter(conn, limit: int = None) -> dict:
             if reason:
                 update_ai_filter(conn, job_id, "pass", reason)
                 stats["auto_passed"] += 1
-                logger.debug(f"  ✅ [{job_id}] {titre} — {reason}")
                 continue
 
-            # ── 2. Reject titre (surqualification) ──────────────
+            # ── 2. Reject titre ──────────────────────────────────
             result = _reject_title(job)
             if result:
                 cat, reason = result
                 update_ai_filter(conn, job_id, "reject", reason)
                 stats["rejected"] += 1
-                logger.debug(f"  ❌ [{job_id}] {titre} — {reason}")
                 continue
 
             # ── 3. Reject paramédical ────────────────────────────
@@ -223,26 +319,47 @@ def run_filter(conn, limit: int = None) -> dict:
                 cat, reason = result
                 update_ai_filter(conn, job_id, "reject", reason)
                 stats["rejected"] += 1
-                logger.debug(f"  ❌ [{job_id}] {titre} — {reason}")
                 continue
 
-            # ── 4. Reject filière (si colonne dispo) ────────────
+            # ── 4. Reject filière ────────────────────────────────
             result = _reject_filiere(job)
             if result:
                 cat, reason = result
                 update_ai_filter(conn, job_id, "reject", reason)
                 stats["rejected"] += 1
-                logger.debug(f"  ❌ [{job_id}] {titre} — {reason}")
                 continue
 
-            # ── [SLOT IA] ────────────────────────────────────────
-            # TODO : appel LLM ici (même logique que filter_ai.py)
-            # ────────────────────────────────────────────────────
+            # ── 5. Filtre IA ─────────────────────────────────────
+            if groq_client and not daily_limit_hit:
+                try:
+                    decision, categorie, raison = _ai_filter(job, groq_client)
 
-            # ── 5. Fallback : passe par défaut ──────────────────
-            update_ai_filter(conn, job_id, "pass", "Aucun filtre déclenché — passage par défaut")
-            stats["fallback_passed"] += 1
-            logger.debug(f"  🟡 [{job_id}] {titre} — fallback pass")
+                    if decision == "reject":
+                        update_ai_filter(conn, job_id, "reject", raison)
+                        stats["rejected"] += 1
+                        stats["ai_rejected"] += 1
+                        logger.debug(f"  ❌ IA [{job_id}] {titre} — {raison}")
+                    elif decision == "error":
+                        # Fallback pass sur erreur unitaire
+                        update_ai_filter(conn, job_id, "pass", f"Erreur IA — fallback pass : {raison}")
+                        stats["fallback_passed"] += 1
+                        stats["ai_errors"] += 1
+                    else:
+                        update_ai_filter(conn, job_id, "pass", raison)
+                        stats["ai_passed"] += 1
+                        logger.debug(f"  ✅ IA [{job_id}] {titre} — {raison}")
+
+                except RuntimeError as e:
+                    # Limite journalière → on bascule tous les restants en fallback
+                    logger.error(f"Limite Groq TPD : {e}")
+                    daily_limit_hit = True
+                    update_ai_filter(conn, job_id, "pass", "Limite Groq — fallback pass")
+                    stats["fallback_passed"] += 1
+
+            else:
+                # Pas de client IA ou limite atteinte → fallback pass
+                update_ai_filter(conn, job_id, "pass", "Filtre IA indisponible — passage par défaut")
+                stats["fallback_passed"] += 1
 
         except Exception as e:
             logger.error(f"  ⚠️  Erreur sur job {job_id} : {e}")
@@ -268,7 +385,7 @@ def run_filter(conn, limit: int = None) -> dict:
 
 if __name__ == "__main__":
     import os
-    import psycopg2
+    import psycopg as psycopg2
     from database_hcl import get_connection
 
     logging.basicConfig(level=logging.DEBUG)

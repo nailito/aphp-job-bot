@@ -1,6 +1,8 @@
+#pipeline aphp
+
 import time
 import os
-import psycopg2
+import psycopg as psycopg2
 from datetime import datetime
 from notifier import send_telegram
 

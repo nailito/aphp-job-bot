@@ -1,6 +1,6 @@
 # migrate.py
 import sqlite3
-import psycopg2
+import psycopg as psycopg2
 import os
 
 SQLITE_PATH = "aphp_jobs.db"

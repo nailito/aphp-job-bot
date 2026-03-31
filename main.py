@@ -1,6 +1,6 @@
 from database import get_stats
 from config   import EXCLUDED_METIERS
-import psycopg2
+import psycopg as psycopg2
 import os
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
