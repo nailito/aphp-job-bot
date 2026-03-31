@@ -1263,10 +1263,12 @@ elif page == "📝 À évaluer HCL":
  
                 with st.expander(header):
                     # Métriques
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Score",     f"{score_val}/100" if score_val else "–")
-                    c2.metric("Priorité",  prio)
-                    c3.metric("Contrat",   row.get("contrat","–") or "–")
+                    date_pub = row["first_seen"].strftime("%d/%m/%Y") if pd.notna(row.get("first_seen")) else "–"
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Score",      f"{score_val}/100" if score_val else "–")
+                    c2.metric("Priorité",   prio)
+                    c3.metric("Contrat",    row.get("contrat","–") or "–")
+                    c4.metric("Première vue", date_pub)
  
                     # Analyse IA
                     if pd.notna(row.get("score_raison")) and row["score_raison"]:
@@ -1327,9 +1329,11 @@ elif page == "📝 À évaluer HCL":
  
                 with st.expander(f"{dec} **{row['title']}** — {row['location']}"):
                     score_val = int(row["score"]) if pd.notna(row.get("score")) else None
-                    c1, c2 = st.columns(2)
-                    c1.metric("Score",  f"{score_val}/100" if score_val else "–")
-                    c2.metric("Contrat", row.get("contrat","–") or "–")
+                    date_pub = row["first_seen"].strftime("%d/%m/%Y") if pd.notna(row.get("first_seen")) else "–"
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Score",        f"{score_val}/100" if score_val else "–")
+                    c2.metric("Contrat",      row.get("contrat","–") or "–")
+                    c3.metric("Première vue", date_pub)
  
                     if f.get("commentaire"):
                         st.markdown(f"**Feedback :** {f['commentaire']}")
