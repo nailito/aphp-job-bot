@@ -54,16 +54,19 @@ def init_db():
             """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS pipeline_runs (
-                    id            SERIAL PRIMARY KEY,
-                    run_date      TEXT,
-                    n_scraped     INTEGER,
-                    n_new         INTEGER,
-                    n_removed     INTEGER,
-                    n_passed_ai   INTEGER,
-                    n_rejected_ai INTEGER,
-                    n_scored      INTEGER,
-                    status        TEXT,
-                    duration_sec  INTEGER
+                    id                  SERIAL PRIMARY KEY,
+                    run_at              TIMESTAMPTZ DEFAULT now(),
+                    source              TEXT,
+                    total_scraped       INTEGER DEFAULT 0,
+                    new_offers          INTEGER DEFAULT 0,
+                    removed_offers      INTEGER DEFAULT 0,
+                    reactivated_offers  INTEGER DEFAULT 0,
+                    ai_filtered         INTEGER DEFAULT 0,
+                    ai_passed           INTEGER DEFAULT 0,
+                    ai_rejected         INTEGER DEFAULT 0,
+                    scored              INTEGER DEFAULT 0,
+                    status              TEXT,
+                    duration_sec        INTEGER
                 )
             """)
         conn.commit()

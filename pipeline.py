@@ -23,12 +23,17 @@ def save_run(n_scraped, n_new, n_removed, n_passed_ai, n_rejected_ai, n_scored, 
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO pipeline_runs
-                (run_date, n_scraped, n_new, n_removed, n_passed_ai, n_rejected_ai, n_scored, status, duration_sec)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (datetime.now().isoformat(), n_scraped, n_new, n_removed,
-                  n_passed_ai, n_rejected_ai, n_scored, status, duration))
+                (run_at, source, total_scraped, new_offers, removed_offers,
+                 ai_passed, ai_rejected, scored, status, duration_sec)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                datetime.now(timezone.utc), "aphp",
+                n_scraped, n_new, n_removed,
+                n_passed_ai, n_rejected_ai, n_scored,
+                status, duration
+            ))
         conn.commit()
-
+        
 def get_counts(new_ids: set):
     if not new_ids:
         return 0, 0, 0
