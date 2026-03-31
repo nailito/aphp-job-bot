@@ -1,4 +1,4 @@
-name: 🏥 Pipeline APHP quotidien
+name: 🏥 Pipeline daily
 
 on:
   schedule:
