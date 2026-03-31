@@ -147,7 +147,9 @@ REJECT_PARAMEDICAL_KEYWORDS = [
     "dei ", "d.e.i",
     "diplôme d'état aide-soignant", "diplôme d'état de sage-femme",
     "diplôme d'état de masseur", "diplôme d'état de manipulateur",
-    "ibode", "iade", "cadre de santé",
+    "ibode", "iade", "Diplôme de Cadre de Santé","Bac +3","BAC + 3",
+    "DUT", "BTS", "Bac Pro", "Bac Pro ASSP", "Bac Pro SAPAT","Licence",
+    "Bac + 2", "Bac +2","BAC + 2",
     "auxiliaire de puériculture", "auxiliaire de puericulture",
     "electroradiologie", "électroradiologie",
     "dts manipulateur"
