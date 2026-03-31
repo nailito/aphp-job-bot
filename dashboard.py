@@ -1239,7 +1239,7 @@ elif page == "📝 À évaluer HCL":
             col_tri, _ = st.columns([1, 3])
             tri = col_tri.selectbox(
                 "Trier par",
-                ["Score (meilleur en premier)", "Score (moins bon en premier)", "Première vue"],
+                ["Score (meilleur en premier)", "Score (moins bon en premier)", "Date de publication (plus récent)"],
                 key="tri_eval_hcl",
             )
  
@@ -1247,9 +1247,9 @@ elif page == "📝 À évaluer HCL":
             if tri == "Score (meilleur en premier)":
                 df_a_evaluer = df_a_evaluer.sort_values("score_num", ascending=False, na_position="last")
             elif tri == "Score (moins bon en premier)":
-                df_a_evaluer = df_a_evaluer.sort_values("score_num", ascending=True,  na_position="last")
+                df_a_evaluer = df_a_evaluer.sort_values("score_num", ascending=True, na_position="last")
             else:
-                df_a_evaluer = df_a_evaluer.sort_values("first_seen", ascending=False)
+                df_a_evaluer = df_a_evaluer.sort_values("date_publication", ascending=False, na_position="last")
  
             df_a_evaluer = df_a_evaluer.reset_index(drop=True)
  
@@ -1264,13 +1264,12 @@ elif page == "📝 À évaluer HCL":
                 header      = f"{score_label}**{row['title']}** — {row['location']}"
  
                 with st.expander(header):
-                    # Métriques
-                    date_pub = row["first_seen"].strftime("%d/%m/%Y") if pd.notna(row.get("first_seen")) else "–"
+                    date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                     c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Score",      f"{score_val}/100" if score_val else "–")
-                    c2.metric("Priorité",   prio)
-                    c3.metric("Contrat",    row.get("contrat","–") or "–")
-                    c4.metric("Première vue", date_pub)
+                    c1.metric("Score",             f"{score_val}/100" if score_val else "–")
+                    c2.metric("Priorité",          prio)
+                    c3.metric("Contrat",           row.get("contrat","–") or "–")
+                    c4.metric("Publiée le",        date_pub)
  
                     # Analyse IA
                     if pd.notna(row.get("score_raison")) and row["score_raison"]:
@@ -1330,12 +1329,12 @@ elif page == "📝 À évaluer HCL":
                 dec = f.get("decision","?")
  
                 with st.expander(f"{dec} **{row['title']}** — {row['location']}"):
+                    date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                     score_val = int(row["score"]) if pd.notna(row.get("score")) else None
-                    date_pub = row["first_seen"].strftime("%d/%m/%Y") if pd.notna(row.get("first_seen")) else "–"
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("Score",        f"{score_val}/100" if score_val else "–")
-                    c2.metric("Contrat",      row.get("contrat","–") or "–")
-                    c3.metric("Première vue", date_pub)
+                    c1.metric("Score",      f"{score_val}/100" if score_val else "–")
+                    c2.metric("Contrat",    row.get("contrat","–") or "–")
+                    c3.metric("Publiée le", date_pub)
  
                     if f.get("commentaire"):
                         st.markdown(f"**Feedback :** {f['commentaire']}")
@@ -1351,7 +1350,6 @@ elif page == "📝 À évaluer HCL":
                                 delete_feedback_hcl(_conn, int(row["id"]))
                             st.cache_data.clear()
                             st.rerun()
- 
  
 # ══════════════════════════════════════════════════════════════════════════════
 # 🚀 À POSTULER — HCL
