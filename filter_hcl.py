@@ -14,7 +14,13 @@ from groq import Groq
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
-PROMPT_TEMPLATE = """Tu es un assistant de recrutement pour les Hospices Civiles de Lyon. Analyse cette offre d'emploi hospitalière selon les règles ci-dessous.
+PROMPT_TEMPLATE = """Tu es un assistant de recrutement. Tu analyses des offres d'emploi des Hospices Civils de Lyon (HCL) pour le compte d'un candidat ingénieur.
+
+## PROFIL DU CANDIDAT
+Ingénieur diplômé de l'École Centrale de Lyon (Bac+5, diplôme d'ingénieur généraliste).
+Compétences : gestion de projet, data, systèmes d'information, qualité, biomédical, contrôle de gestion, achat, management.
+Recherche : tout poste à responsabilité dans un environnement hospitalier pouvant être occupé par un ingénieur ou un cadre Bac+5.
+N'est PAS intéressé par : les postes purement techniques d'exécution (électricien, plombier...), les postes paramédicaux, les postes de niveau Bac/BTS.
 
 ## OFFRE
 Titre       : {titre}
@@ -131,28 +137,59 @@ PASS_KEYWORDS = [
 ]
 
 REJECT_TITLE_KEYWORDS = [
-    "électricien", "plombier", "cuisinier", "menuisier", "peintre",
-    "chauffeur", "ambulancier", "manutentionnaire",
-    "agent de restauration", "agent logistique", "agent de service",
-    "agent d'entretien", "agent de stérilisation", "agent de sécurité",
-    "brancardier", "lingère", "magasinier",
+    # Métiers du bâtiment / maintenance
+    "électricien", "plombier", "menuisier", "peintre", "soudeur",
+    "chauffagiste", "climaticien", "maçon", "serrurier",
     "technicien de maintenance", "technicien polyvalent",
     "technicien biomédical",
-    "standardiste", "agent d'accueil", "agent de facturation",
-    "gestionnaire de stocks", "secrétaire médical",
+    # Logistique / transport
+    "chauffeur", "ambulancier", "manutentionnaire", "magasinier",
+    "agent logistique", "agent de logistique",
+    "livreur", "coursier",
+    # Restauration / hôtellerie
+    "cuisinier", "cuisinière", "aide-cuisinier",
+    "agent de restauration", "agent restauration",
+    "plongeur",
+    # Nettoyage / entretien
+    "agent de service", "agent d'entretien", "agent de nettoyage",
+    "agent de propreté", "technicien de surface", "ouvrier d'entretien",
+    # Santé / soins de base
+    "brancardier", "agent de stérilisation",
+    "lingère", "aide-soignant",
+    # Sécurité
+    "agent de sécurité", "agent de surveillance",
+    # Administratif d'exécution
+    "standardiste", "agent d'accueil", "hôte d'accueil",
+    "agent de facturation", "gestionnaire de stocks",
+    "secrétaire médical", "secrétaire médicale",
 ]
 
+# Uniquement des diplômes ou certifications paramédicaux stricts.
+# NE PAS mettre de noms de métiers/filières ici (risque de faux positifs
+# sur des offres d'ingénieur qui mentionnent ces métiers comme interlocuteurs).
 REJECT_PARAMEDICAL_KEYWORDS = [
+    # Diplômes infirmiers
     "diplôme d'état infirmier", "diplome d'etat infirmier",
-    "dei ", "d.e.i",
-    "diplôme d'état aide-soignant", "diplôme d'état de sage-femme",
-    "diplôme d'état de masseur", "diplôme d'état de manipulateur",
-    "ibode", "iade", "Diplôme de Cadre de Santé","Bac +3","BAC + 3",
-    "DUT", "BTS", "Bac Pro", "Bac Pro ASSP", "Bac Pro SAPAT","Licence",
-    "Bac + 2", "Bac +2","BAC + 2",
+    "diplôme d'état d'infirmier", "diplome d'etat d'infirmier",
+    "d.e. infirmier", "d.e infirmier",
+    "ibode", "iade",
+    # Diplômes aides-soignants / auxiliaires
+    "diplôme d'état aide-soignant", "diplome d'etat aide-soignant",
+    "diplôme d'état d'aide-soignant",
+    "deas",  # Diplôme d'État d'Aide-Soignant
+    "deap",  # Diplôme d'État d'Auxiliaire de Puériculture
     "auxiliaire de puériculture", "auxiliaire de puericulture",
+    # Diplômes sage-femme / maïeutique
+    "diplôme d'état de sage-femme", "diplome d'etat de sage-femme",
+    # Diplômes de rééducation
+    "diplôme d'état de masseur", "diplome d'etat de masseur",
+    "diplôme d'état de kinésithérapeute",
+    # Diplômes médico-technique / imagerie
+    "diplôme d'état de manipulateur", "diplome d'etat de manipulateur",
+    "dts manipulateur",
     "electroradiologie", "électroradiologie",
-    "dts manipulateur"
+    # Cadre de santé
+    "diplôme de cadre de santé", "diplome de cadre de sante",
 ]
 
 REJECT_FILIERES = [
@@ -164,9 +201,16 @@ REJECT_FILIERES = [
     "Métiers du soin",
     "Secrétariat médical",
     "Pharmacie",
+    "Médico-technique",
+    "Puériculture",
+    "Orthophonie",
 ]
 
-REJECT_CONTRATS: list[str] = []
+# Valeurs à rejeter dans le champ contrat (recherche partielle, insensible à la casse)
+REJECT_CONTRATS = [
+    "stage",
+    "alternance",
+]
 
 
 def _text(job: dict, *fields: str) -> str:
@@ -189,6 +233,19 @@ def _auto_pass(job: dict) -> str | None:
     return None
 
 
+def _reject_contrat(job: dict) -> tuple[str, str] | None:
+    contrat = str(job.get("contrat") or "").strip().lower()
+    if not contrat:
+        return None
+    for c in REJECT_CONTRATS:
+        if c.lower() in contrat:
+            return (
+                "contrat_exclu",
+                f"Auto-reject contrat : '{c}' détecté dans '{contrat}'",
+            )
+    return None
+
+
 def _reject_filiere(job: dict) -> tuple[str, str] | None:
     filiere = str(job.get("filiere") or "").strip()
     if not filiere:
@@ -203,12 +260,15 @@ def _reject_filiere(job: dict) -> tuple[str, str] | None:
 
 
 def _reject_paramedical(job: dict) -> tuple[str, str] | None:
+    # Recherche dans titre + description — liste limitée aux diplômes stricts
+    # pour éviter les faux positifs sur des offres d'ingénieur mentionnant
+    # des métiers paramédicaux comme interlocuteurs.
     text = _text(job, "titre", "description")
     kw = _check_keywords(text, REJECT_PARAMEDICAL_KEYWORDS)
     if kw:
         return (
             "diplome_paramedical",
-            f"Auto-reject paramédical : '{kw}' détecté",
+            f"Auto-reject paramédical : diplôme '{kw}' exigé",
         )
     return None
 
@@ -254,11 +314,13 @@ def run_filter(conn, limit: int = None) -> dict:
         titre = job.get("titre", "")[:60]
 
         try:
-            # ── 1. Auto-pass Bac+5
-            reason = _auto_pass(job)
-            if reason:
-                update_ai_filter(conn, job_id, "pass", reason)
-                stats["auto_passed"] += 1
+            # ── 1. Reject contrat (stage, alternance)
+            result = _reject_contrat(job)
+            if result:
+                cat, reason = result
+                update_ai_filter(conn, job_id, "reject", reason)
+                stats["rejected"] += 1
+                logger.debug(f"  ❌ Contrat [{job_id}] {titre} — {reason}")
                 continue
 
             # ── 2. Reject titre
@@ -267,14 +329,16 @@ def run_filter(conn, limit: int = None) -> dict:
                 cat, reason = result
                 update_ai_filter(conn, job_id, "reject", reason)
                 stats["rejected"] += 1
+                logger.debug(f"  ❌ Titre [{job_id}] {titre} — {reason}")
                 continue
 
-            # ── 3. Reject paramédical
+            # ── 3. Reject paramédical (diplômes stricts dans titre + description)
             result = _reject_paramedical(job)
             if result:
                 cat, reason = result
                 update_ai_filter(conn, job_id, "reject", reason)
                 stats["rejected"] += 1
+                logger.debug(f"  ❌ Paramédical [{job_id}] {titre} — {reason}")
                 continue
 
             # ── 4. Reject filière
@@ -283,9 +347,18 @@ def run_filter(conn, limit: int = None) -> dict:
                 cat, reason = result
                 update_ai_filter(conn, job_id, "reject", reason)
                 stats["rejected"] += 1
+                logger.debug(f"  ❌ Filière [{job_id}] {titre} — {reason}")
                 continue
 
-            # ── 5. Filtre IA
+            # ── 5. Auto-pass Bac+5 (après tous les rejets)
+            reason = _auto_pass(job)
+            if reason:
+                update_ai_filter(conn, job_id, "pass", reason)
+                stats["auto_passed"] += 1
+                logger.debug(f"  ✅ Auto-pass [{job_id}] {titre} — {reason}")
+                continue
+
+            # ── 6. Filtre IA
             if groq_client and not daily_limit_hit:
                 try:
                     decision, categorie, raison = _ai_filter(job, groq_client)
@@ -296,8 +369,9 @@ def run_filter(conn, limit: int = None) -> dict:
                         stats["ai_rejected"] += 1
                         logger.debug(f"  ❌ IA [{job_id}] {titre} — {raison}")
                     elif decision == "error":
+                        # Pas de mise à jour en base : le job sera retraité au prochain run
                         stats["ai_errors"] += 1
-                        logger.debug(f"  ⏳ IA error [{job_id}] {titre} — laissé à trier")
+                        logger.warning(f"  ⚠️  IA error [{job_id}] {titre} — sera retraité")
                     else:
                         update_ai_filter(conn, job_id, "pass", raison)
                         stats["ai_passed"] += 1
@@ -309,22 +383,23 @@ def run_filter(conn, limit: int = None) -> dict:
                     logger.info(f"  ⏳ [{job_id}] laissé à trier (limite Groq journalière)")
 
             else:
-                # IA indisponible ou limite atteinte — on laisse à trier
                 logger.debug(f"  ⏳ [{job_id}] laissé à trier (IA indisponible)")
 
         except Exception as e:
             logger.error(f"  ⚠️  Erreur sur job {job_id} : {e}")
             stats["errors"] += 1
 
-    kept = stats["auto_passed"] + stats["fallback_passed"]
+    kept = stats["auto_passed"] + stats["fallback_passed"] + stats["ai_passed"]
     ratio = (kept / total * 100) if total else 0
     print(f"\n📊 Résumé filtre HCL :")
-    print(f"   Total analysées  : {total}")
-    print(f"   ✅ Auto-passées  : {stats['auto_passed']}")
-    print(f"   🟡 Fallback pass : {stats['fallback_passed']}")
-    print(f"   ❌ Rejetées      : {stats['rejected']}")
-    print(f"   ⚠️  Erreurs       : {stats['errors']}")
-    print(f"   → Taux de rétention : {ratio:.1f}%")
+    print(f"   Total analysées      : {total}")
+    print(f"   ✅ Auto-passées      : {stats['auto_passed']}")
+    print(f"   🤖 IA passées        : {stats['ai_passed']}")
+    print(f"   🟡 Fallback pass     : {stats['fallback_passed']}")
+    print(f"   ❌ Rejetées          : {stats['rejected']}")
+    print(f"   ⚠️  Erreurs IA        : {stats['ai_errors']}")
+    print(f"   ⚠️  Erreurs générales : {stats['errors']}")
+    print(f"   → Taux de rétention  : {ratio:.1f}%")
 
     return stats
 
