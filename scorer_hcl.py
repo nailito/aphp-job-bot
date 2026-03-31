@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 PROMPT_TEMPLATE = """
 Tu es un recruteur senior aux Hospices Civils de Lyon (HCL). Tu reçois le CV d'un candidat et une offre d'emploi.
-Ton rôle est d'évaluer honnêtement si ce candidat serait retenu ou écarté pour ce poste.
+Ton rôle est d'évaluer honnêtement si ce candidat serait retenu ou écarté pour ce poste. 
+Attarde toi tout particulièrement sur les prérequis de l'offre.
 Tu dois être critique et identifier les vrais points de friction, pas juste les similitudes.
 
 ## PROFIL FACTUEL DU CANDIDAT
@@ -74,6 +75,8 @@ En tant que recruteur HCL, évalue :
 ⚠️ Il est STRICTEMENT INTERDIT de commencer la raison par une phrase générique comme :
 "Le candidat possède des compétences solides", "Le profil est pertinent",
 "Le candidat présente une expérience intéressante" ou toute formule similaire.
+
+Il ne sert à rien de répéter des éléments du profil ou de l'offre de manière générique. La raison DOIT être spécifique à CETTE offre.
 
 La raison DOIT :
 - Mentionner des éléments SPÉCIFIQUES à cette offre (nom du service, outil précis demandé,
