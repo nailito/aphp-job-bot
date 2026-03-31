@@ -215,6 +215,13 @@ st.sidebar.caption(f"Sync : {str(df_all['last_seen'].max())[:16]}")
 st.sidebar.divider()
 
 # Navigation — pages communes aux deux sources
+PAGES_SHARED = [
+    "📊 Tableau de bord",
+    "🔍 Explorer les offres",
+    "✅ Offres acceptées par le filtre",
+    "📰 Rapport du jour",
+]f
+
 PAGES_APHP = [
     "🚀 À postuler",
     "📨 Mes candidatures",
