@@ -284,3 +284,14 @@ def delete_feedback_hcl(conn, job_id: int) -> None:
         cur.execute("DELETE FROM hcl_feedbacks WHERE job_id = %s", (job_id,))
     conn.commit()
     logger.info(f"Feedback HCL supprimé : job_id={job_id}")
+
+def delete_old_offers(conn, months: int = 6) -> int:
+    """Supprime les offres dont date_publication est antérieure à N mois."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            DELETE FROM offers
+            WHERE date_publication < NOW() - INTERVAL '%s months'
+        """, (months,))
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted

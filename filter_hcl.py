@@ -10,6 +10,7 @@ import json
 import re
 import time
 import os
+from datetime import datetime, timedelta, date
 from groq import Groq
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -347,6 +348,19 @@ def run_filter(conn, limit: int = None) -> dict:
         titre = job.get("titre", "")[:60]
 
         try:
+            # ── 0. Reject offre trop ancienne (> 6 mois)
+            date_pub = job.get("date_publication")
+            if date_pub:
+                try:
+                    age = date.today() - date.fromisoformat(str(date_pub)[:10])
+                    if age.days > 183:
+                        update_ai_filter(conn, job_id, "reject", "Auto-reject : offre de plus de 6 mois")
+                        stats["rejected"] += 1
+                        logger.debug(f"  ❌ Trop ancienne [{job_id}] {titre}")
+                        continue
+                except ValueError:
+                    logger.warning(f"  ⚠️  date_publication invalide [{job_id}] : {date_pub}")
+
             # ── 1. Reject contrat (stage, alternance)
             result = _reject_contrat(job)
             if result:
