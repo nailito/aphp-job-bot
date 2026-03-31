@@ -1,3 +1,4 @@
+#scorer hcl
 import json
 import re
 import time

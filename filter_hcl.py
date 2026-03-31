@@ -162,15 +162,22 @@ REJECT_TITLE_KEYWORDS = [
     "standardiste", "agent d'accueil", "hôte d'accueil",
     "agent de facturation", "gestionnaire de stocks",
     "secrétaire médical", "secrétaire médicale",
+    # Profils hors ingénierie
+    "juriste", "avocat", "enseignant", "professeur", "formateur",
+    "ressources humaines", "rh", "recruteur", "chargé de recrutement",
+    #medical
+    "Médecin", "médecin", "pharmacien", "pharmacienne", "psychologue",
 ]
 
 # Diplômes ou certifications paramédicaux stricts.
 # NE PAS mettre de noms de métiers/filières ici (risque de faux positifs
 # sur des offres d'ingénieur qui mentionnent ces métiers comme interlocuteurs).
 REJECT_PARAMEDICAL_KEYWORDS = [
+    "Diplôme Cadre de Santé",
     # Diplômes infirmiers
     "diplôme d'état infirmier", "diplome d'etat infirmier",
     "diplôme d'état d'infirmier", "diplome d'etat d'infirmier",
+    "Diplôme Infirmier",
     "d.e. infirmier", "d.e infirmier",
     "ibode", "iade",
     # Diplômes aides-soignants / auxiliaires
@@ -190,6 +197,8 @@ REJECT_PARAMEDICAL_KEYWORDS = [
     "electroradiologie", "électroradiologie",
     # Cadre de santé
     "diplôme de cadre de santé", "diplome de cadre de sante",
+    "Master 2 de Psychologie","DESS Psychologie","école de psychologues ",
+    "D.E.S",
 ]
 
 # Niveaux de diplôme explicitement trop bas pour un ingénieur Bac+5.
@@ -212,6 +221,7 @@ REJECT_FILIERES = [
     "Secrétariat médical",
     "Pharmacie",
     "Médico-technique",
+    "Socio-éducatif, psychologue",
     "Puériculture",
     "Orthophonie",
 ]

@@ -74,6 +74,39 @@ def load_aphp() -> pd.DataFrame:
     return df
 
 
+def _parse_score_analysis(raw) -> pd.Series:
+    """
+    Désérialise le JSON stocké dans score_analysis (scorer_hcl).
+    Format attendu :
+      {"priorite": "P2", "raison": "...", "points_forts": [...], "points_faibles": [...]}
+    Fallback gracieux si le champ est vide ou contient du texte brut.
+    """
+    empty = pd.Series({
+        "score_raison":       None,
+        "priorite":           "–",
+        "score_points_forts":  None,
+        "score_points_faibles": None,
+    })
+    if not raw or (isinstance(raw, float) and pd.isna(raw)):
+        return empty
+    try:
+        parsed = json.loads(raw)
+        return pd.Series({
+            "score_raison":       parsed.get("raison", "") or "",
+            "priorite":           parsed.get("priorite", "–") or "–",
+            "score_points_forts":  json.dumps(parsed.get("points_forts", []),  ensure_ascii=False),
+            "score_points_faibles": json.dumps(parsed.get("points_faibles", []), ensure_ascii=False),
+        })
+    except (json.JSONDecodeError, TypeError):
+        # Texte brut legacy ou erreur de parse → on l'affiche tel quel comme raison
+        return pd.Series({
+            "score_raison":       str(raw),
+            "priorite":           "–",
+            "score_points_forts":  None,
+            "score_points_faibles": None,
+        })
+
+
 @st.cache_data(ttl=30)
 def load_hcl() -> pd.DataFrame:
     conn = get_connection()
@@ -89,16 +122,23 @@ def load_hcl() -> pd.DataFrame:
     conn.close()
     df = df.drop_duplicates(subset="id")
 
-    # ── Renommages
+    # ── Renommages de base (sans score_analysis, traité séparément)
     df = df.rename(columns={
-        "titre":              "title",
-        "localisation":       "location",
-        "contrats":           "contrat",
-        "ai_filter_reason":   "rejection_reason",
-        "first_seen_at":      "first_seen",
-        "last_seen_at":       "last_seen",
-        "score_analysis":     "score_raison",
+        "titre":            "title",
+        "localisation":     "location",
+        "contrats":         "contrat",
+        "ai_filter_reason": "rejection_reason",
+        "first_seen_at":    "first_seen",
+        "last_seen_at":     "last_seen",
     })
+
+    # ── Parse score_analysis → score_raison, priorite, points_forts, points_faibles
+    parsed = df["score_analysis"].apply(_parse_score_analysis)
+    df["score_raison"]        = parsed["score_raison"]
+    df["priorite"]            = parsed["priorite"]
+    df["score_points_forts"]  = parsed["score_points_forts"]
+    df["score_points_faibles"] = parsed["score_points_faibles"]
+    df = df.drop(columns=["score_analysis"])
 
     # ── Mapping rejection_category depuis ai_filter_decision
     def _map_cat(row):
@@ -115,16 +155,13 @@ def load_hcl() -> pd.DataFrame:
     df["rejection_category"] = df.apply(_map_cat, axis=1)
 
     # ── Colonnes absentes dans HCL
-    df["hopital"]             = ""
-    df["metier"]              = ""
-    df["filiere"]             = ""
-    df["priorite"]            = "–"
-    df["score_points_forts"]  = None
-    df["score_points_faibles"] = None
-    df["date_publication"]    = pd.to_datetime(df["first_seen"], errors="coerce")
-    df["first_seen"]          = pd.to_datetime(df["first_seen"], errors="coerce")
-    df["scored_at"]           = pd.to_datetime(df["scored_at"],  errors="coerce")
-    df["_source"]             = "HCL"
+    df["hopital"]          = ""
+    df["metier"]           = ""
+    df["filiere"]          = ""
+    df["date_publication"] = pd.to_datetime(df["first_seen"], errors="coerce")
+    df["first_seen"]       = pd.to_datetime(df["first_seen"], errors="coerce")
+    df["scored_at"]        = pd.to_datetime(df["scored_at"],  errors="coerce")
+    df["_source"]          = "HCL"
     return df
 
 
@@ -307,11 +344,21 @@ if page == "📊 Tableau de bord":
         n_pending = len(df_active[df_active["rejection_category"].isna()])
         n_scored  = len(df_active[df_active["score"].notna()])
 
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("📋 Offres actives",    n_total)
         c2.metric("✅ Retenues filtre",   n_pass)
         c3.metric("❌ Rejetées filtre",   n_reject)
         c4.metric("⏳ Sans décision",     n_pending)
+        c5.metric("🎯 Scorées",           n_scored)
+
+        # ── Breakdown priorité si des offres ont été scorées
+        if n_scored > 0:
+            df_sc = df_active[df_active["score"].notna()]
+            p1 = len(df_sc[df_sc["priorite"] == "P1"])
+            p2 = len(df_sc[df_sc["priorite"] == "P2"])
+            p3 = len(df_sc[df_sc["priorite"] == "P3"])
+            st.caption(f"Scorées — 🟢 P1 : {p1} · 🟡 P2 : {p2} · 🔴 P3 : {p3}")
+
         st.divider()
 
     # ── Camembert commun
@@ -333,8 +380,8 @@ if page == "📊 Tableau de bord":
         n_pending = len(df_active[df_active["rejection_category"].isna()])
         n_scored  = len(df_active[df_active["score"].notna()])
 
-        labels = ["✅ Retenues", "❌ Rejetées", "⏳ Sans décision", "🎯 Scorées"]
-        values = [n_pass - n_scored, n_reject, n_pending, n_scored]
+        labels = ["✅ Retenues (non scorées)", "❌ Rejetées", "⏳ Sans décision", "🎯 Scorées"]
+        values = [max(n_pass - n_scored, 0), n_reject, n_pending, n_scored]
         colors = ["#34d399", "#f87171", "#94a3b8", "#0ea5e9"]
         title  = f"Répartition des {n_total_actif:,} offres HCL actives"
 
@@ -399,7 +446,7 @@ elif page == "🔍 Explorer les offres":
 
     df_d = df_view.copy()
     df_d["statut_score"] = df_d.apply(
-        lambda r: f"✅ {int(r['score'])}/100" if pd.notna(r.get("score")) else
+        lambda r: f"✅ {int(r['score'])}/100 [{r.get('priorite','–')}]" if pd.notna(r.get("score")) else
                   ("✅ Retenue" if r.get("rejection_category") == "passed_filter_1" else
                    CATEGORY_LABELS.get(r.get("rejection_category",""), r.get("rejection_category","") or "⏳ En attente")),
         axis=1
@@ -413,21 +460,21 @@ elif page == "🔍 Explorer les offres":
         col_labels = ["Titre","Statut / Score","Analyse / Raison","Hôpital","Publiée le","Lien"]
     else:
         cols_show = ["title","statut_score","raison","location","contrat","date_publication","url"]
-        col_labels = ["Titre","Statut","Raison","Localisation","Contrat","Première vue","Lien"]
+        col_labels = ["Titre","Statut","Raison / Analyse","Localisation","Contrat","Première vue","Lien"]
 
     df_d = df_d[cols_show].copy()
     df_d.columns = col_labels
 
     st.dataframe(df_d, use_container_width=True, hide_index=True,
         column_config={
-            "Lien":           st.column_config.LinkColumn("Lien", display_text="Voir →"),
-            "Titre":          st.column_config.TextColumn(width="large"),
-            "Statut / Score": st.column_config.TextColumn(width="small"),
-            "Statut":         st.column_config.TextColumn(width="small"),
-            "Analyse / Raison": st.column_config.TextColumn(width="large"),
-            "Raison":         st.column_config.TextColumn(width="large"),
-            "Publiée le":     st.column_config.DateColumn(format="DD/MM/YYYY", width="small"),
-            "Première vue":   st.column_config.DateColumn(format="DD/MM/YYYY", width="small"),
+            "Lien":               st.column_config.LinkColumn("Lien", display_text="Voir →"),
+            "Titre":              st.column_config.TextColumn(width="large"),
+            "Statut / Score":     st.column_config.TextColumn(width="small"),
+            "Statut":             st.column_config.TextColumn(width="small"),
+            "Analyse / Raison":   st.column_config.TextColumn(width="large"),
+            "Raison / Analyse":   st.column_config.TextColumn(width="large"),
+            "Publiée le":         st.column_config.DateColumn(format="DD/MM/YYYY", width="small"),
+            "Première vue":       st.column_config.DateColumn(format="DD/MM/YYYY", width="small"),
         })
 
     st.divider()
@@ -439,6 +486,23 @@ elif page == "🔍 Explorer les offres":
             st.markdown(f"**🏥 {row['hopital']}** · 📍 {row['location']} · {row['contrat']}")
         else:
             st.markdown(f"📍 {row['location']} · 📄 {row['contrat']}")
+
+        # Analyse IA si scorée
+        if pd.notna(row.get("score")):
+            score_val = int(row["score"])
+            prio      = row.get("priorite", "–")
+            emoji     = "🟢" if score_val >= 80 else "🟡" if score_val >= 60 else "🔴"
+            st.markdown(f"{emoji} **{score_val}/100** · Priorité **{prio}**")
+            if pd.notna(row.get("score_raison")) and row["score_raison"]:
+                st.info(row["score_raison"])
+            try:
+                pf = json.loads(row.get("score_points_forts") or "[]")
+                pp = json.loads(row.get("score_points_faibles") or "[]")
+                if pf: st.markdown("**✅ Points forts :** " + " · ".join(pf))
+                if pp: st.markdown("**⚠️ Points faibles :** " + " · ".join(pp))
+            except Exception:
+                pass
+
         if pd.notna(row.get("description")) and row["description"]:
             with st.expander("Description complète"):
                 st.markdown(str(row["description"])[:3000], unsafe_allow_html=False)
@@ -475,19 +539,52 @@ elif page == "✅ Offres acceptées par le filtre":
                 cols = ["score","priorite","title","metier","filiere","hopital","location","contrat","score_raison","url"]
                 labels = ["Score","Priorité","Titre","Métier","Filière","Hôpital","Lieu","Contrat","Analyse IA","URL"]
             else:
-                cols = ["score","title","location","contrat","score_raison","url"]
-                labels = ["Score","Titre","Localisation","Contrat","Analyse","URL"]
+                cols = ["score","priorite","title","location","contrat","score_raison","url"]
+                labels = ["Score","Priorité","Titre","Localisation","Contrat","Analyse IA","URL"]
 
             df_s = df_scorees[cols].copy()
             df_s.columns = labels
             st.dataframe(df_s, use_container_width=True, hide_index=True,
                 column_config={
-                    "URL":       st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                    "Titre":     st.column_config.TextColumn(width="large"),
+                    "URL":        st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                    "Titre":      st.column_config.TextColumn(width="large"),
                     "Analyse IA": st.column_config.TextColumn(width="large"),
-                    "Analyse":   st.column_config.TextColumn(width="large"),
-                    "Score":     st.column_config.NumberColumn(format="%d/100"),
+                    "Score":      st.column_config.NumberColumn(format="%d/100"),
+                    "Priorité":   st.column_config.TextColumn(width="small"),
                 })
+
+            # ── Détail points forts/faibles pour HCL
+            if source == "HCL":
+                st.divider()
+                selected_s = st.selectbox(
+                    "Détail d'une offre scorée",
+                    ["–"] + df_scorees["title"].tolist(),
+                    key="detail_scoree_hcl"
+                )
+                if selected_s != "–":
+                    row = df_scorees[df_scorees["title"] == selected_s].iloc[0]
+                    score_val = int(row["score"])
+                    prio      = row.get("priorite", "–")
+                    emoji     = "🟢" if score_val >= 80 else "🟡" if score_val >= 60 else "🔴"
+                    st.markdown(f"### {row['title']}")
+                    st.markdown(f"📍 {row['location']} · 📄 {row['contrat']} · {emoji} **{score_val}/100** · Priorité **{prio}**")
+                    if pd.notna(row.get("score_raison")) and row["score_raison"]:
+                        st.info(row["score_raison"])
+                    try:
+                        pf = json.loads(row.get("score_points_forts") or "[]")
+                        pp = json.loads(row.get("score_points_faibles") or "[]")
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            if pf:
+                                st.markdown("**✅ Points forts**")
+                                for p in pf: st.markdown(f"- {p}")
+                        with c2:
+                            if pp:
+                                st.markdown("**⚠️ Points faibles**")
+                                for p in pp: st.markdown(f"- {p}")
+                    except Exception:
+                        pass
+                    st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")
 
     with tab_non_scorees:
         if df_non_scorees.empty:
@@ -504,15 +601,11 @@ elif page == "✅ Offres acceptées par le filtre":
             df_ns.columns = labels
             st.dataframe(df_ns, use_container_width=True, hide_index=True,
                 column_config={
-                    "URL":   st.column_config.LinkColumn("Lien", display_text="Voir →"),
-                    "Titre": st.column_config.TextColumn(width="large"),
+                    "URL":            st.column_config.LinkColumn("Lien", display_text="Voir →"),
+                    "Titre":          st.column_config.TextColumn(width="large"),
                     "Raison passage": st.column_config.TextColumn(width="large"),
                 })
-
-            if source == "HCL":
-                st.info("Le scoring HCL n'est pas encore activé — à venir.")
-            else:
-                st.info("Lance `python -c \"from scorer import run_scorer; run_scorer()\"` pour scorer.")
+            st.info("Active `scoring_enabled = True` dans `pipeline_hcl.py` pour scorer ces offres.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -599,17 +692,25 @@ elif page == "📰 Rapport du jour":
                 df_p = df_p.sort_values("score", ascending=False, na_position="last")
                 for _, row in df_p.iterrows():
                     score   = int(row["score"]) if pd.notna(row.get("score")) else "–"
+                    prio    = row.get("priorite", "–")
                     emoji   = "🟢" if isinstance(score, int) and score >= 80 else "🟡" if isinstance(score, int) and score >= 60 else "⚪"
                     loc     = row.get("hopital") or row.get("location","")
-                    header  = f"{emoji} {score}/100 — **{row['title']}** — {loc}" if score != "–" else f"⚪ **{row['title']}** — {loc}"
+                    header  = f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {loc}" if score != "–" else f"⚪ **{row['title']}** — {loc}"
 
                     with st.expander(header):
                         if score != "–":
                             c1, c2 = st.columns(2)
                             c1.metric("Score", f"{score}/100")
-                            c2.metric("Priorité", row.get("priorite","–"))
-                        if pd.notna(row.get("score_raison")):
+                            c2.metric("Priorité", prio)
+                        if pd.notna(row.get("score_raison")) and row["score_raison"]:
                             st.info(row["score_raison"])
+                            try:
+                                pf = json.loads(row.get("score_points_forts") or "[]")
+                                pp = json.loads(row.get("score_points_faibles") or "[]")
+                                if pf: st.markdown("**✅ Points forts :** " + " · ".join(pf))
+                                if pp: st.markdown("**⚠️ Points faibles :** " + " · ".join(pp))
+                            except Exception:
+                                pass
                         reason = row.get("rejection_reason","")
                         if reason and not pd.isna(reason):
                             st.caption(f"Raison passage : {reason}")
@@ -639,15 +740,23 @@ elif page == "📰 Rapport du jour":
             else:
                 for _, row in df_s.iterrows():
                     score = int(row["score"])
+                    prio  = row.get("priorite", "–")
                     emoji = "🟢" if score >= 80 else "🟡" if score >= 60 else "🔴"
                     loc   = row.get("hopital") or row.get("location","")
 
-                    with st.expander(f"{emoji} {score}/100 — **{row['title']}** — {loc}"):
+                    with st.expander(f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {loc}"):
                         c1, c2 = st.columns(2)
                         c1.metric("Score", f"{score}/100")
-                        c2.metric("Priorité", row.get("priorite","–"))
-                        if pd.notna(row.get("score_raison")):
+                        c2.metric("Priorité", prio)
+                        if pd.notna(row.get("score_raison")) and row["score_raison"]:
                             st.info(row["score_raison"])
+                            try:
+                                pf = json.loads(row.get("score_points_forts") or "[]")
+                                pp = json.loads(row.get("score_points_faibles") or "[]")
+                                if pf: st.markdown("**✅ Points forts :** " + " · ".join(pf))
+                                if pp: st.markdown("**⚠️ Points faibles :** " + " · ".join(pp))
+                            except Exception:
+                                pass
                         st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")
 
     st.divider()
@@ -925,7 +1034,7 @@ elif page == "📝 À évaluer":
 
             for idx, row in df_a_evaluer.iterrows():
                 score_label = f"🎯 {int(row['score'])}/100 — " if pd.notna(row.get("score")) else ""
-                prio_label  = f"[{row['priorite']}] " if pd.notna(row.get("priorite")) else ""
+                prio_label  = f"[{row['priorite']}] " if pd.notna(row.get("priorite")) and row.get("priorite") not in ("–", None) else ""
                 job_id      = row["id"]
                 job_key     = f"{idx}_{job_id}"
 
