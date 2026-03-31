@@ -163,9 +163,9 @@ def load_hcl() -> pd.DataFrame:
     df["hopital"]          = ""
     df["metier"]           = ""
     df["filiere"]          = ""
-    df["date_publication"] = pd.to_datetime(
-        df["date_publication"].fillna(df["first_seen"]), errors="coerce"
-    )
+    df["date_publication"] = pd.to_datetime(df["date_publication"], errors="coerce")
+    first_seen_naive = df["first_seen"].dt.tz_localize(None) if df["first_seen"].dt.tz is not None else df["first_seen"]
+    df["date_publication"] = df["date_publication"].fillna(first_seen_naive)
     df["first_seen"]       = pd.to_datetime(df["first_seen"], errors="coerce")
     df["scored_at"]        = pd.to_datetime(df["scored_at"],  errors="coerce")
     df["_source"]          = "HCL"
