@@ -261,8 +261,7 @@ def get_feedbacks_hcl(conn) -> list[dict]:
                 j.localisation AS location,
                 j.contrats     AS contrat,
                 j.url,
-                j.score,
-                j.priorite_parsed  -- colonne virtuelle si présente, sinon retire cette ligne
+                j.score
             FROM hcl_feedbacks f
             JOIN hcl_jobs j ON f.job_id = j.id
             ORDER BY f.created_at DESC
