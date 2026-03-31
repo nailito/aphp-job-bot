@@ -216,11 +216,11 @@ def load_filter_results() -> dict:
             return {}
         conn = psycopg2.connect(database_url)
         cur = conn.cursor()
-        cur.execute("SELECT id, ai_filter_decision FROM hcl_jobs")
+        cur.execute("SELECT id, ai_filter_decision, ai_filter_reason FROM hcl_jobs")  # ← ajouter la colonne
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        return {row[0]: row[1] for row in rows} if rows else {}
+        return {row[0]: {"decision": row[1], "reason": row[2]} for row in rows} if rows else {}
     except Exception as e:
         st.warning(f"Impossible de charger les décisions IA : {e}")
         return {}
@@ -335,7 +335,9 @@ with st.spinner("⏳ Chargement des offres HCL depuis l'API…"):
 
 # FIX : injecter la décision IA dans chaque offre (pas de conn/get_active_offers)
 for o in offers:
-    o["ai_filter_decision"] = filter_map.get(o["id"])
+    result = filter_map.get(o["id"]) or {}
+    o["ai_filter_decision"] = result.get("decision")
+    o["ai_filter_reason"]   = result.get("reason")  # ← nouveau
 
 # ---------------------------------------------------------------------------
 # Sidebar — filtres
@@ -527,11 +529,22 @@ for offer in page_offers:
         badges_html += render_badge(f"📅 {offer['date_pub']}", "badge-date")
     if offer["date_debut"] and offer["date_debut"] != "0":
         badges_html += render_badge(f"🚀 Début: {offer['date_debut']}", "badge-date")
+    ai_reason = offer.get("ai_filter_reason") or ""
     if offer.get("ai_filter_decision") == "pass":
         badges_html += render_badge("✅ IA OK", "badge-filiere")
     elif offer.get("ai_filter_decision") == "reject":
         badges_html += render_badge("❌ IA NO", "badge-duree")
     badges_html += '</div>'
+    ai_reason_html = ""
+    ai_reason = offer.get("ai_filter_reason") or ""
+    if ai_reason and offer.get("ai_filter_decision"):
+        color = "#4ade80" if offer["ai_filter_decision"] == "pass" else "#fbbf24"
+        ai_reason_html = f"""
+        <div style="font-size:0.72rem;color:{color};margin-top:0.4rem;
+                    padding:0.3rem 0.6rem;background:rgba(255,255,255,0.04);
+                    border-radius:6px;border-left:2px solid {color}">
+          🤖 {ai_reason}
+        </div>"""
 
     desc = offer["description"]
     if desc_mode == "Aperçu (3 lignes)":
