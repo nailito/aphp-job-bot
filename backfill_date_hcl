@@ -1,0 +1,53 @@
+# backfill_dates_hcl.py
+import os
+import requests
+import psycopg as psycopg2
+from psycopg.rows import dict_row
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+BASE_URL = "https://chu-lyon.nous-recrutons.fr/wp-json/wp/v2/job"
+HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+
+def get_date(session, job_id):
+    try:
+        resp = session.get(
+            f"{BASE_URL}/{job_id}",
+            params={"_fields": "id,date"},
+            headers=HEADERS,
+            timeout=15,
+        )
+        if resp.status_code == 404:
+            return None  # offre supprimée côté HCL
+        resp.raise_for_status()
+        date_str = resp.json().get("date", "")
+        return date_str[:10] if date_str else None
+    except Exception as e:
+        print(f"  ⚠️  Erreur id={job_id} : {e}")
+        return None
+
+conn = psycopg2.connect(DATABASE_URL, prepare_threshold=None)
+with conn.cursor(row_factory=dict_row) as cur:
+    cur.execute("SELECT id FROM hcl_jobs WHERE date_publication IS NULL")
+    ids = [row["id"] for row in cur.fetchall()]
+
+print(f"{len(ids)} offres sans date_publication")
+
+session = requests.Session()
+updated = 0
+
+for job_id in ids:
+    date = get_date(session, job_id)
+    if date:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE hcl_jobs SET date_publication = %s WHERE id = %s",
+                (date, job_id)
+            )
+        conn.commit()
+        print(f"  ✅ {job_id} → {date}")
+        updated += 1
+    else:
+        print(f"  ⏭️  {job_id} → pas de date (offre peut-être retirée)")
+
+conn.close()
+print(f"\n{updated}/{len(ids)} offres mises à jour.")

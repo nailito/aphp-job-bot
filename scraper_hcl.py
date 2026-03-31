@@ -229,15 +229,18 @@ def parse_offer(
     else:
         description = None
 
+    date_publication = raw.get("date", "")[:10] or None  # format "2024-03-15T10:30:00" → "2024-03-15"
+
     return {
         "id": offer_id,
         "titre": titre,
         "url": url,
         "localisation": localisation,
         "contrats": contrats,
-        "filiere": filiere,         
+        "filiere": filiere,
         "duree": duree,
         "date_debut": date_debut,
+        "date_publication": date_publication,
         "description": description,
     }
 

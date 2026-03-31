@@ -117,11 +117,11 @@ def load_hcl() -> pd.DataFrame:
     conn = get_connection()
     df = pd.read_sql("""
         SELECT id, titre, url, localisation, contrats,
-               duree, date_debut, description,
-               status, miss_count,
-               ai_filter_decision, ai_filter_reason,
-               score, score_analysis, scored_at,
-               first_seen_at, last_seen_at
+            duree, date_debut, description,
+            status, miss_count,
+            ai_filter_decision, ai_filter_reason,
+            score, score_analysis, scored_at,
+            first_seen_at, last_seen_at, date_publication
         FROM hcl_jobs
     """, conn)
     conn.close()
@@ -163,7 +163,9 @@ def load_hcl() -> pd.DataFrame:
     df["hopital"]          = ""
     df["metier"]           = ""
     df["filiere"]          = ""
-    df["date_publication"] = pd.to_datetime(df["first_seen"], errors="coerce")
+    df["date_publication"] = pd.to_datetime(
+        df["date_publication"].fillna(df["first_seen"]), errors="coerce"
+    )
     df["first_seen"]       = pd.to_datetime(df["first_seen"], errors="coerce")
     df["scored_at"]        = pd.to_datetime(df["scored_at"],  errors="coerce")
     df["_source"]          = "HCL"
