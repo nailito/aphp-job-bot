@@ -221,3 +221,67 @@ def log_pipeline_run(conn, stats: dict, source: str = "hcl"):
             stats.get("scored", 0),
         ))
     conn.commit()
+
+# ---------------------------------------------------------------------------
+# Feedbacks utilisateur
+# ---------------------------------------------------------------------------
+
+def save_feedback_hcl(conn, job_id: int, decision: str, commentaire: str = "") -> None:
+    """
+    Upsert un feedback sur une offre HCL.
+    decision : '⭐' | '👍' | '👎'
+    """
+    now = datetime.now(timezone.utc)
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO hcl_feedbacks (job_id, decision, commentaire, created_at)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (job_id) DO UPDATE
+                SET decision    = EXCLUDED.decision,
+                    commentaire = EXCLUDED.commentaire,
+                    created_at  = EXCLUDED.created_at
+        """, (job_id, decision, commentaire, now))
+    conn.commit()
+    logger.info(f"Feedback HCL sauvegardé : job_id={job_id} decision={decision}")
+
+
+def get_feedbacks_hcl(conn) -> list[dict]:
+    """
+    Retourne tous les feedbacks HCL enrichis des métadonnées de l'offre.
+    Même format de sortie que get_feedbacks() APHP.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("""
+            SELECT
+                f.job_id,
+                f.decision,
+                f.commentaire,
+                f.created_at,
+                j.titre        AS title,
+                j.localisation AS location,
+                j.contrats     AS contrat,
+                j.url,
+                j.score,
+                j.priorite_parsed  -- colonne virtuelle si présente, sinon retire cette ligne
+            FROM hcl_feedbacks f
+            JOIN hcl_jobs j ON f.job_id = j.id
+            ORDER BY f.created_at DESC
+        """)
+        return [dict(row) for row in cur.fetchall()]
+
+
+def get_feedbacks_hcl_simple(conn) -> list[dict]:
+    """
+    Version allégée : uniquement job_id + decision.
+    Utile pour construire les sets feedbacks_positifs / feedbacks_existants.
+    """
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT job_id, decision FROM hcl_feedbacks")
+        return [dict(row) for row in cur.fetchall()]
+
+
+def delete_feedback_hcl(conn, job_id: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM hcl_feedbacks WHERE job_id = %s", (job_id,))
+    conn.commit()
+    logger.info(f"Feedback HCL supprimé : job_id={job_id}")

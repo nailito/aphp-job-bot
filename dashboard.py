@@ -8,6 +8,11 @@ import streamlit as st
 from datetime import datetime, timezone, timedelta
 
 from config import EXCLUDED_METIERS
+from database_hcl import (
+    save_feedback_hcl,
+    get_feedbacks_hcl_simple,
+    delete_feedback_hcl,
+)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -210,14 +215,6 @@ st.sidebar.caption(f"Sync : {str(df_all['last_seen'].max())[:16]}")
 st.sidebar.divider()
 
 # Navigation — pages communes aux deux sources
-PAGES_SHARED = [
-    "📊 Tableau de bord",
-    "🔍 Explorer les offres",
-    "✅ Offres acceptées par le filtre",
-    "📰 Rapport du jour",
-]
-
-# Pages APHP uniquement
 PAGES_APHP = [
     "🚀 À postuler",
     "📨 Mes candidatures",
@@ -226,8 +223,16 @@ PAGES_APHP = [
     "🗑️ Offres retirées du site",
     "⚙️  Config",
 ]
-
-pages = PAGES_SHARED + (PAGES_APHP if source == "APHP" else [])
+ 
+PAGES_HCL = [
+    "📝 À évaluer HCL",
+    "🚀 À postuler HCL",
+]
+ 
+if source == "APHP":
+    pages = PAGES_SHARED + PAGES_APHP
+else:
+    pages = PAGES_SHARED + PAGES_HCL
 
 if st.session_state.nav not in pages:
     st.session_state.nav = "📊 Tableau de bord"
@@ -343,21 +348,46 @@ if page == "📊 Tableau de bord":
         n_reject  = len(df_active[df_active["rejection_category"].isin(["diplome_paramedical","surqualification"])])
         n_pending = len(df_active[df_active["rejection_category"].isna()])
         n_scored  = len(df_active[df_active["score"].notna()])
-
+    
+        # Feedbacks HCL
+        with get_connection() as _conn:
+            _fb_hcl = get_feedbacks_hcl_simple(_conn)
+        _fb_positifs_hcl = {f["job_id"] for f in _fb_hcl if f["decision"] in ("⭐", "👍")}
+        _fb_existants_hcl = {f["job_id"] for f in _fb_hcl}
+    
+        n_a_evaluer_hcl = len(df_active[
+            (df_active["rejection_category"] == "passed_filter_1") &
+            (~df_active["id"].isin(_fb_existants_hcl))
+        ])
+        n_a_postuler_hcl = len(df_active[
+            df_active["id"].isin(_fb_positifs_hcl)
+        ])
+    
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("📋 Offres actives",    n_total)
-        c2.metric("✅ Retenues filtre",   n_pass)
-        c3.metric("❌ Rejetées filtre",   n_reject)
-        c4.metric("⏳ Sans décision",     n_pending)
-        c5.metric("🎯 Scorées",           n_scored)
-
-        # ── Breakdown priorité si des offres ont été scorées
+        c1.metric("📋 Offres actives",  n_total)
+        c2.metric("✅ Retenues filtre", n_pass)
+        c3.metric("❌ Rejetées filtre", n_reject)
+        c4.metric("⏳ Sans décision",   n_pending)
+        c5.metric("🎯 Scorées",         n_scored)
+    
         if n_scored > 0:
             df_sc = df_active[df_active["score"].notna()]
             p1 = len(df_sc[df_sc["priorite"] == "P1"])
             p2 = len(df_sc[df_sc["priorite"] == "P2"])
             p3 = len(df_sc[df_sc["priorite"] == "P3"])
             st.caption(f"Scorées — 🟢 P1 : {p1} · 🟡 P2 : {p2} · 🔴 P3 : {p3}")
+    
+        st.divider()
+    
+        col_ev_hcl, col_pos_hcl = st.columns(2)
+        with col_ev_hcl:
+            if st.button(f"📝 À évaluer\n\n{n_a_evaluer_hcl}", use_container_width=True):
+                st.session_state.nav = "📝 À évaluer HCL"
+                st.rerun()
+        with col_pos_hcl:
+            if st.button(f"🚀 À postuler\n\n{n_a_postuler_hcl}", use_container_width=True):
+                st.session_state.nav = "🚀 À postuler HCL"
+                st.rerun()
 
         st.divider()
 
@@ -1164,6 +1194,233 @@ elif page == "🗑️ Offres retirées du site":
                     f = feedback_map[row["id"]]
                     st.markdown(f"**Ton évaluation :** {f['decision']} — {f.get('commentaire','–')}")
                 st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")
+
+
+elif page == "📝 À évaluer HCL":
+    st.title("📝 À évaluer — HCL")
+ 
+    conn_eval = get_connection()
+    try:
+        fb_all      = get_feedbacks_hcl_simple(conn_eval)
+        fb_existants = {f["job_id"] for f in fb_all}
+        fb_decisions = {f["job_id"]: f["decision"] for f in fb_all}
+ 
+        df_a_evaluer = df_active[
+            (df_active["rejection_category"] == "passed_filter_1") &
+            (~df_active["id"].isin(fb_existants))
+        ].copy().drop_duplicates(subset="id")
+ 
+        df_deja_evalues = df_active[
+            df_active["id"].isin(fb_existants)
+        ].copy()
+ 
+    finally:
+        conn_eval.close()
+ 
+    tab_eval, tab_done = st.tabs([
+        f"⏳ À évaluer ({len(df_a_evaluer)})",
+        f"✅ Déjà évalués ({len(df_deja_evalues)})",
+    ])
+ 
+    # ── Onglet : À évaluer
+    with tab_eval:
+        if df_a_evaluer.empty:
+            st.info("🎉 Toutes les offres HCL retenues ont été évaluées !")
+        else:
+            col_tri, _ = st.columns([1, 3])
+            tri = col_tri.selectbox(
+                "Trier par",
+                ["Score (meilleur en premier)", "Score (moins bon en premier)", "Première vue"],
+                key="tri_eval_hcl",
+            )
+ 
+            df_a_evaluer["score_num"] = pd.to_numeric(df_a_evaluer["score"], errors="coerce")
+            if tri == "Score (meilleur en premier)":
+                df_a_evaluer = df_a_evaluer.sort_values("score_num", ascending=False, na_position="last")
+            elif tri == "Score (moins bon en premier)":
+                df_a_evaluer = df_a_evaluer.sort_values("score_num", ascending=True,  na_position="last")
+            else:
+                df_a_evaluer = df_a_evaluer.sort_values("first_seen", ascending=False)
+ 
+            df_a_evaluer = df_a_evaluer.reset_index(drop=True)
+ 
+            for idx, row in df_a_evaluer.iterrows():
+                job_id    = row["id"]
+                job_key   = f"hcl_{idx}_{job_id}"
+                score_val = int(row["score"]) if pd.notna(row.get("score")) else None
+                prio      = row.get("priorite", "–")
+                emoji     = "🟢" if score_val and score_val >= 80 else "🟡" if score_val and score_val >= 60 else "🔴" if score_val else "⚪"
+ 
+                score_label = f"{emoji} {score_val}/100 [{prio}] — " if score_val else ""
+                header      = f"{score_label}**{row['title']}** — {row['location']}"
+ 
+                with st.expander(header):
+                    # Métriques
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Score",     f"{score_val}/100" if score_val else "–")
+                    c2.metric("Priorité",  prio)
+                    c3.metric("Contrat",   row.get("contrat","–") or "–")
+ 
+                    # Analyse IA
+                    if pd.notna(row.get("score_raison")) and row["score_raison"]:
+                        st.info(row["score_raison"])
+                    try:
+                        pf = json.loads(row.get("score_points_forts") or "[]")
+                        pp = json.loads(row.get("score_points_faibles") or "[]")
+                        if pf: st.markdown("**✅ Points forts :** " + " · ".join(pf))
+                        if pp: st.markdown("**⚠️ Points faibles :** " + " · ".join(pp))
+                    except Exception:
+                        pass
+ 
+                    # Description
+                    if pd.notna(row.get("description")) and row["description"]:
+                        with st.expander("Description complète"):
+                            st.markdown(str(row["description"])[:3000], unsafe_allow_html=False)
+ 
+                    st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True)
+                    st.divider()
+ 
+                    # Boutons de décision
+                    c_a, c_b, c_c = st.columns(3)
+                    btn_top = c_a.button("⭐ Excellent",       key=f"top_{job_key}", use_container_width=True)
+                    btn_oui = c_b.button("👍 Intéressant",     key=f"oui_{job_key}", use_container_width=True)
+                    btn_non = c_c.button("👎 Pas intéressant", key=f"non_{job_key}", use_container_width=True)
+ 
+                    if btn_top: st.session_state[f"dec_hcl_{job_id}"] = "⭐"
+                    if btn_oui: st.session_state[f"dec_hcl_{job_id}"] = "👍"
+                    if btn_non: st.session_state[f"dec_hcl_{job_id}"] = "👎"
+ 
+                    if f"dec_hcl_{job_id}" in st.session_state:
+                        dec = st.session_state[f"dec_hcl_{job_id}"]
+                        st.markdown(f"**Décision : {dec}**")
+                        commentaire = st.text_area("Ton feedback :", key=f"comment_{job_key}", height=80)
+ 
+                        if st.button("💾 Sauvegarder", key=f"save_{job_key}", use_container_width=True, type="primary"):
+                            with get_connection() as _conn:
+                                save_feedback_hcl(_conn, int(job_id), dec, commentaire)
+                            del st.session_state[f"dec_hcl_{job_id}"]
+                            st.success("✅ Sauvegardé !")
+                            st.cache_data.clear()
+                            st.rerun()
+ 
+    # ── Onglet : Déjà évalués
+    with tab_done:
+        if df_deja_evalues.empty:
+            st.info("Aucun feedback HCL pour l'instant.")
+        else:
+            with get_connection() as _conn:
+                fb_full = {
+                    f["job_id"]: f
+                    for f in __import__("database_hcl", fromlist=["get_feedbacks_hcl"]).get_feedbacks_hcl(_conn)
+                }
+ 
+            for _, row in df_deja_evalues.iterrows():
+                f = fb_full.get(row["id"], {})
+                dec = f.get("decision","?")
+ 
+                with st.expander(f"{dec} **{row['title']}** — {row['location']}"):
+                    score_val = int(row["score"]) if pd.notna(row.get("score")) else None
+                    c1, c2 = st.columns(2)
+                    c1.metric("Score",  f"{score_val}/100" if score_val else "–")
+                    c2.metric("Contrat", row.get("contrat","–") or "–")
+ 
+                    if f.get("commentaire"):
+                        st.markdown(f"**Feedback :** {f['commentaire']}")
+                    created = str(f.get("created_at",""))[:10]
+                    if created:
+                        st.caption(f"Évalué le {created}")
+ 
+                    c_link, c_del = st.columns(2)
+                    c_link.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True)
+                    with c_del:
+                        if st.button("🗑️ Supprimer", key=f"del_hcl_{row['id']}", use_container_width=True):
+                            with get_connection() as _conn:
+                                delete_feedback_hcl(_conn, int(row["id"]))
+                            st.cache_data.clear()
+                            st.rerun()
+ 
+ 
+# ══════════════════════════════════════════════════════════════════════════════
+# 🚀 À POSTULER — HCL
+# ══════════════════════════════════════════════════════════════════════════════
+ 
+elif page == "🚀 À postuler HCL":
+    st.title("🚀 À postuler — HCL")
+ 
+    with get_connection() as _conn:
+        fb_hcl = get_feedbacks_hcl_simple(_conn)
+ 
+    fb_positifs = {f["job_id"] for f in fb_hcl if f["decision"] in ("⭐", "👍")}
+ 
+    df_postuler = df_active[
+        df_active["id"].isin(fb_positifs)
+    ].copy()
+ 
+    if df_postuler.empty:
+        st.info("Aucune offre à postuler — évalue des offres dans **📝 À évaluer HCL**.")
+        st.stop()
+ 
+    df_postuler["score_num"] = pd.to_numeric(df_postuler["score"], errors="coerce")
+    df_postuler = df_postuler.sort_values("score_num", ascending=False).reset_index(drop=True)
+ 
+    fb_dec = {f["job_id"]: f["decision"] for f in fb_hcl}
+ 
+    if "selected_job_hcl" not in st.session_state:
+        st.session_state.selected_job_hcl = df_postuler.iloc[0]["id"]
+ 
+    col_left, col_right = st.columns([1, 2])
+ 
+    with col_left:
+        st.subheader(f"📋 {len(df_postuler)} offres")
+        for _, row in df_postuler.iterrows():
+            job_id    = row["id"]
+            score_val = int(row["score"]) if pd.notna(row.get("score")) else "–"
+            dec_emoji = fb_dec.get(job_id, "👍")
+            label     = f"{dec_emoji} {row['title'][:32]}… ({score_val}/100)"
+            active    = job_id == st.session_state.selected_job_hcl
+ 
+            if st.button(label, key=f"hcl_apply_{job_id}", use_container_width=True,
+                         type="primary" if active else "secondary"):
+                st.session_state.selected_job_hcl = job_id
+                st.rerun()
+ 
+    with col_right:
+        sel = df_postuler[df_postuler["id"] == st.session_state.selected_job_hcl]
+        if sel.empty:
+            st.info("Sélectionne une offre.")
+            st.stop()
+ 
+        job = sel.iloc[0]
+ 
+        st.subheader(job["title"])
+        st.markdown(f"📍 **{job['location']}** · 📄 {job.get('contrat','–')}")
+ 
+        score_val = int(job["score"]) if pd.notna(job.get("score")) else "–"
+        prio      = job.get("priorite","–")
+        emoji     = "🟢" if isinstance(score_val, int) and score_val >= 80 else "🟡" if isinstance(score_val, int) and score_val >= 60 else "🔴"
+ 
+        c1, c2 = st.columns(2)
+        c1.metric("Score",    f"{emoji} {score_val}/100" if score_val != "–" else "–")
+        c2.metric("Priorité", prio)
+ 
+        if pd.notna(job.get("score_raison")) and job["score_raison"]:
+            with st.expander("🧠 Analyse IA"):
+                st.write(job["score_raison"])
+                try:
+                    pf = json.loads(job.get("score_points_forts") or "[]")
+                    pp = json.loads(job.get("score_points_faibles") or "[]")
+                    if pf: st.markdown("**✅ Points forts :** " + " · ".join(pf))
+                    if pp: st.markdown("**⚠️ Points faibles :** " + " · ".join(pp))
+                except Exception:
+                    pass
+ 
+        if pd.notna(job.get("description")) and job["description"]:
+            with st.expander("📄 Description complète"):
+                st.markdown(str(job["description"])[:3000], unsafe_allow_html=False)
+ 
+        st.divider()
+        st.link_button("🚀 Postuler sur HCL →", job["url"], use_container_width=True, type="primary")
+
 
 
 elif page == "⚙️  Config":
