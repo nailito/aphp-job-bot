@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def get_connection(database_url: str):
-    return psycopg2.connect(database_url)
+    return psycopg2.connect(database_url, prepare_threshold=None)
 
 
 # ---------------------------------------------------------------------------
