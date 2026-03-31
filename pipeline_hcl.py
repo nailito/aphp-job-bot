@@ -244,18 +244,20 @@ def run_pipeline():
 
     except Exception as e:
         duration = int(time.time() - start)
-
         logger.exception("Pipeline crash global")
-        log_pipeline_run(conn, run_stats, source="hcl")
-
+        
+        try:
+            conn.rollback()  # ← remet la connexion dans un état sain
+            log_pipeline_run(conn, run_stats, source="hcl")
+        except Exception as log_err:
+            logger.error(f"Impossible de logger le crash : {log_err}")
+        
         msg = f"❌ Crash pipeline HCL ({duration}s): {e}"
         notify(msg)
-
         raise
 
     finally:
         conn.close()
-
 
 # ─────────────────────────────────────────────
 # ENTRYPOINT
