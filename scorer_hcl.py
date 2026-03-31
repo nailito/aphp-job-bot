@@ -117,6 +117,9 @@ def _score_job(job: dict, client: Groq) -> dict | None:
         contrats=job.get("contrats", ""),
         description=(job.get("description") or "")[:2000],
     )
+    print(f"[DEBUG] JOB {job.get('id')} - prompt length = {len(prompt)}")
+    print(f"[DEBUG] JOB {job.get('id')} - titre = {job.get('titre')}")
+
 
     for attempt in range(5):
         try:
@@ -125,17 +128,23 @@ def _score_job(job: dict, client: Groq) -> dict | None:
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
             )
+            print(f"[DEBUG] JOB {job.get('id')} - LLM call done")
             raw = response.choices[0].message.content.strip()
+            print(f"[DEBUG] JOB {job.get('id')} - RAW:")
+            print(raw[:500])
             match = re.search(r"\{.*\}", raw, re.DOTALL)
+            print(f"[DEBUG] JOB {job.get('id')} - match found = {bool(match)}")
             if not match:
                 raise ValueError(f"Pas de JSON trouvé : {raw[:80]}")
 
             result = json.loads(match.group(0))
+            print(f"[DEBUG] JOB {job.get('id')} - parsed JSON = {result}")
             result["raison"] = result.get("raison", "").strip() or "Pas de justification fournie"
             return result
 
         except Exception as e:
             err = str(e)
+            print(f"[ERROR] JOB {job.get('id')} - attempt {attempt+1} failed: {err}")
             logger.warning(f"    Tentative {attempt + 1}/5 échouée : {err[:80]}")
 
             if "429" in err or "rate_limit" in err:
@@ -152,6 +161,7 @@ def _score_job(job: dict, client: Groq) -> dict | None:
 def _persist(conn, job: dict, result: dict):
     """Sérialise l'analyse complète et appelle update_score."""
     score = int(result.get("score", 0))
+    print(f"[DEBUG] JOB {job.get('id')} - score = {score}")
     analysis = json.dumps(
         {
             "priorite": result.get("priorite", "P3"),
@@ -162,11 +172,13 @@ def _persist(conn, job: dict, result: dict):
         ensure_ascii=False,
     )
     update_score(conn, job["id"], score, analysis)
+    print(f"[DEBUG] JOB {job.get('id')} - DB updated")
     return score
 
 
 def _notify_top_score(job: dict, score: int, priorite: str, raison: str):
     if score < 80:
+        print(f"[DEBUG] JOB {job.get('id')} - no notify (score={score})")
         return
     try:
         from notifier import send_telegram
@@ -176,6 +188,7 @@ def _notify_top_score(job: dict, score: int, priorite: str, raison: str):
             f"📍 {job.get('localisation', '')}\n"
             f"🔗 {job.get('url', '')}"
         )
+        print(f"[DEBUG] JOB {job.get('id')} - sending telegram")
     except Exception as e:
         logger.warning(f"Telegram failed: {e}")
 
@@ -206,8 +219,10 @@ def run_scorer(conn, limit: int = None) -> dict:
     client = Groq(api_key=GROQ_API_KEY)
 
     jobs = get_offers_to_score(conn)
+    print(f"[DEBUG] jobs récupérés = {len(jobs)}")
     if limit:
         jobs = jobs[:limit]
+        print(f"[DEBUG] jobs après limit = {len(jobs)}")
 
     stats["total"] = len(jobs)
     logger.info(f"🎯 Scoring HCL — {len(jobs)} offres à évaluer")
@@ -218,37 +233,48 @@ def run_scorer(conn, limit: int = None) -> dict:
     daily_limit_hit = False
 
     for i, job in enumerate(jobs, 1):
+        print(f"\n[DEBUG] ---- JOB {i}/{len(jobs)} ----")
+        print(f"[DEBUG] id = {job.get('id')}")
+        print(f"[DEBUG] titre = {job.get('titre')}")
         titre = (job.get("titre") or "")[:60]
         logger.info(f"  [{i}/{len(jobs)}] {titre}")
 
         if daily_limit_hit:
+            print(f"[DEBUG] JOB {job.get('id')} skipped (daily limit)")
             stats["skipped"] += 1
             continue
 
         try:
             result = _score_job(job, client)
+            print(f"[DEBUG] JOB {job.get('id')} - result = {result}")
 
             if result is None:
+                print(f"[DEBUG] JOB {job.get('id')} - result is None")
                 logger.warning(f"    ⚠️  Score impossible pour {job['id']}")
                 stats["errors"] += 1
                 continue
 
             score = _persist(conn, job, result)
+            print(f"[DEBUG] JOB {job.get('id')} - score persisted = {score}")
             priorite = result.get("priorite", "P3")
             raison = result.get("raison", "")
 
             stats["scored"] += 1
+            print(f"[DEBUG] JOB {job.get('id')} - priorite = {priorite}")
+            print(f"[DEBUG] raison = {raison}")
             logger.info(f"    🎯 {priorite} — {score}/100 : {raison[:80]}")
 
             _notify_top_score(job, score, priorite, raison)
 
         except RuntimeError as e:
             # Limite Groq journalière : on arrête proprement sans planter
+            print(f"[ERROR] JOB {job.get('id')} - daily limit hit: {e}")
             logger.error(f"Limite Groq TPD : {e}")
             daily_limit_hit = True
             stats["skipped"] += 1
 
         except Exception as e:
+            print(f"[ERROR] JOB {job.get('id')} - unexpected error: {e}")
             logger.error(f"    ⚠️  Erreur inattendue sur job {job['id']} : {e}")
             stats["errors"] += 1
 
@@ -258,6 +284,7 @@ def run_scorer(conn, limit: int = None) -> dict:
         f"{stats['errors']} erreurs | "
         f"{stats['skipped']} ignorées (limite Groq)"
     )
+    print("\n[DEBUG] FINAL STATS =", stats)
     return stats
 
 
