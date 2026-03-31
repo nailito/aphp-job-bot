@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import psycopg as psycopg2
+from psycopg.rows import dict_row
 
 logger = logging.getLogger(__name__)
 
@@ -25,18 +26,13 @@ def get_connection(database_url: str):
 # ---------------------------------------------------------------------------
 
 def get_all_known_ids(conn) -> set[int]:
-    """
-    Retourne tous les IDs présents en base (actifs ET retirés),
-    indispensable pour le suivi des miss_count et la réactivation.
-    """
     with conn.cursor() as cur:
         cur.execute("SELECT id FROM hcl_jobs")
         return {row[0] for row in cur.fetchall()}
 
 
 def get_active_offers(conn) -> list[dict]:
-    """Retourne toutes les offres actives (non retirées)."""
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             "SELECT * FROM hcl_jobs WHERE status = 'active' ORDER BY first_seen_at DESC"
         )
@@ -44,8 +40,7 @@ def get_active_offers(conn) -> list[dict]:
 
 
 def get_offers_to_score(conn) -> list[dict]:
-    """Offres ayant passé le filtre IA mais pas encore scorées."""
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("""
             SELECT * FROM hcl_jobs
             WHERE status = 'active'
@@ -57,8 +52,7 @@ def get_offers_to_score(conn) -> list[dict]:
 
 
 def get_offers_to_filter(conn) -> list[dict]:
-    """Offres actives sans décision IA."""
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+    with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("""
             SELECT * FROM hcl_jobs
             WHERE status = 'active'
@@ -73,30 +67,16 @@ def get_offers_to_filter(conn) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
-    """
-    Synchronise les offres scrapées avec la base.
-
-    Logique :
-    - Nouvelle offre → INSERT
-    - Offre existante vue → UPDATE last_seen_at + reset miss_count + réactivation éventuelle
-    - Offre connue mais absente du scraping → incrément miss_count
-    - miss_count >= 5 → status = 'removed'
-
-    Returns:
-        dict avec les compteurs new, reactivated, removed, updated
-    """
     now = datetime.now(timezone.utc)
     scraped_ids = {o["id"] for o in scraped_offers}
 
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        # Récupère TOUS les jobs connus (actifs + retirés)
+    with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT id, status, miss_count FROM hcl_jobs")
         known = {row["id"]: dict(row) for row in cur.fetchall()}
 
     stats = {"new": 0, "reactivated": 0, "removed": 0, "updated": 0}
 
     with conn.cursor() as cur:
-        # --- Offres vues dans le scraping
         for offer in scraped_offers:
             oid = offer["id"]
 
@@ -120,9 +100,6 @@ def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
                 existing = known[oid]
                 was_removed = existing["status"] == "removed"
 
-                # Met à jour les champs de listing + réinitialise le miss_count
-                # Ne touche PAS à description si elle est déjà renseignée
-                # (offer["description"] est None pour les offres déjà connues)
                 if offer.get("description") is not None:
                     cur.execute("""
                         UPDATE hcl_jobs SET
@@ -160,11 +137,10 @@ def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
                 else:
                     stats["updated"] += 1
 
-        # --- Offres absentes du scraping → incrément miss_count
         missing_ids = set(known.keys()) - scraped_ids
         for oid in missing_ids:
             if known[oid]["status"] == "removed":
-                continue  # déjà retiré, pas besoin de toucher
+                continue
 
             new_miss = known[oid]["miss_count"] + 1
             if new_miss >= 5:
@@ -197,7 +173,6 @@ def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 def update_ai_filter(conn, job_id: int, decision: str, reason: str):
-    """Enregistre la décision du filtre IA (pass/reject)."""
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE hcl_jobs
@@ -208,7 +183,6 @@ def update_ai_filter(conn, job_id: int, decision: str, reason: str):
 
 
 def update_score(conn, job_id: int, score: int, analysis: str):
-    """Enregistre le score et l'analyse."""
     now = datetime.now(timezone.utc)
     with conn.cursor() as cur:
         cur.execute("""
@@ -224,7 +198,6 @@ def update_score(conn, job_id: int, score: int, analysis: str):
 # ---------------------------------------------------------------------------
 
 def log_pipeline_run(conn, stats: dict, source: str = "hcl"):
-    """Enregistre un run dans la table pipeline_runs (partagée)."""
     now = datetime.now(timezone.utc)
     with conn.cursor() as cur:
         cur.execute("""

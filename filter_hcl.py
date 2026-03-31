@@ -14,10 +14,6 @@ from groq import Groq
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
-# ─────────────────────────────────────────────
-# PROMPT IA
-# ─────────────────────────────────────────────
-
 PROMPT_TEMPLATE = """Tu es un assistant de recrutement pour les Hospices Civiles de Lyon. Analyse cette offre d'emploi hospitalière selon les règles ci-dessous.
 
 ## OFFRE
@@ -78,20 +74,7 @@ Réponds UNIQUEMENT avec le JSON, sans texte avant ou après.
 """
 
 
-# ─────────────────────────────────────────────
-# FILTRE IA
-# ─────────────────────────────────────────────
-
 def _ai_filter(job: dict, client: Groq) -> tuple[str, str | None, str]:
-    """
-    Appelle le LLM pour analyser un job ambigu.
-
-    Returns:
-        (decision, categorie, raison)
-        decision   : "pass" | "reject" | "error"
-        categorie  : "diplome_paramedical" | "surqualification" | None
-        raison     : explication lisible
-    """
     prompt = PROMPT_TEMPLATE.format(
         titre=job.get("titre", ""),
         filiere=job.get("filiere", ""),
@@ -107,7 +90,6 @@ def _ai_filter(job: dict, client: Groq) -> tuple[str, str | None, str]:
             )
             raw = response.choices[0].message.content.strip()
 
-            # Extraction robuste du JSON
             match = re.search(r'\{[^{}]*"resultat"[^{}]*\}', raw, re.DOTALL)
             if not match:
                 match = re.search(r'\{.*\}', raw, re.DOTALL)
@@ -127,23 +109,16 @@ def _ai_filter(job: dict, client: Groq) -> tuple[str, str | None, str]:
 
             if "429" in err_str or "rate_limit" in err_str:
                 if "per day" in err_str or "TPD" in err_str:
-                    # Limite journalière atteinte → on laisse remonter
                     raise RuntimeError(f"Limite journalière Groq atteinte : {err_str}") from e
                 wait = 60 if attempt < 2 else 120
                 logger.info(f"    Rate limit minute — pause {wait}s")
                 time.sleep(wait)
             else:
-                break  # Erreur non-retry → fallback
+                break
 
     return "error", None, "Erreur LLM — passage par défaut"
 
 
-
-# ─────────────────────────────────────────────
-# LISTES DE FILTRES
-# ─────────────────────────────────────────────
-
-# Mots-clés qui signalent un poste Bac+5 → pass automatique
 PASS_KEYWORDS = [
     "bac+5", "bac + 5", "bac +5",
     "diplôme d'ingénieur", "diplome d'ingenieur",
@@ -155,9 +130,7 @@ PASS_KEYWORDS = [
     "formation bac+5", "niveau ingénieur",
 ]
 
-# Mots-clés dans le TITRE qui signalent un poste trop bas niveau → reject
 REJECT_TITLE_KEYWORDS = [
-    # Technique opérationnel
     "électricien", "plombier", "cuisinier", "menuisier", "peintre",
     "chauffeur", "ambulancier", "manutentionnaire",
     "agent de restauration", "agent logistique", "agent de service",
@@ -165,15 +138,11 @@ REJECT_TITLE_KEYWORDS = [
     "brancardier", "lingère", "magasinier",
     "technicien de maintenance", "technicien polyvalent",
     "technicien biomédical",
-    # Administratif d'exécution
     "standardiste", "agent d'accueil", "agent de facturation",
     "gestionnaire de stocks", "secrétaire médical",
 ]
 
-# Mots-clés qui signalent un diplôme paramédical/médical obligatoire → reject
-# Cherchés dans titre ET description
 REJECT_PARAMEDICAL_KEYWORDS = [
-    # Diplômes d'état
     "diplôme d'état infirmier", "diplome d'etat infirmier",
     "dei ", "d.e.i",
     "diplôme d'état aide-soignant", "diplôme d'état de sage-femme",
@@ -184,8 +153,6 @@ REJECT_PARAMEDICAL_KEYWORDS = [
     "dts manipulateur"
 ]
 
-# Filières HCL connues à rejeter directement (labels exacts retournés par l'API)
-# À compléter au fil de l'exploration via explore_hcl.py
 REJECT_FILIERES = [
     "Infirmier",
     "Aide-soignant",
@@ -197,38 +164,22 @@ REJECT_FILIERES = [
     "Pharmacie",
 ]
 
-# Types de contrat à ignorer (labels exacts)
-# Laisser vide pour l'instant — à affiner après exploration
 REJECT_CONTRATS: list[str] = []
 
 
-# ─────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────
-
 def _text(job: dict, *fields: str) -> str:
-    """Concatène plusieurs champs en minuscules pour la recherche de mots-clés."""
     parts = [str(job.get(f) or "") for f in fields]
     return " ".join(parts).lower()
 
 
 def _check_keywords(text: str, keywords: list[str]) -> str | None:
-    """Retourne le premier mot-clé trouvé dans text, ou None."""
     for kw in keywords:
         if kw.lower() in text:
             return kw
     return None
 
 
-# ─────────────────────────────────────────────
-# FILTRES INDIVIDUELS
-# ─────────────────────────────────────────────
-
 def _auto_pass(job: dict) -> str | None:
-    """
-    Retourne une raison de pass si un mot-clé Bac+5 est détecté,
-    None sinon.
-    """
     text = _text(job, "titre", "description")
     kw = _check_keywords(text, PASS_KEYWORDS)
     if kw:
@@ -237,7 +188,7 @@ def _auto_pass(job: dict) -> str | None:
 
 
 def _reject_filiere(job: dict) -> tuple[str, str] | None:
-    filiere = str(job.get("filiere") or "").strip()   # ← champ natif, rien à parser
+    filiere = str(job.get("filiere") or "").strip()
     if not filiere:
         return None
     for f in REJECT_FILIERES:
@@ -250,10 +201,6 @@ def _reject_filiere(job: dict) -> tuple[str, str] | None:
 
 
 def _reject_paramedical(job: dict) -> tuple[str, str] | None:
-    """
-    Retourne (categorie, raison) si le poste exige un diplôme
-    paramédical ou médical, None sinon.
-    """
     text = _text(job, "titre", "description")
     kw = _check_keywords(text, REJECT_PARAMEDICAL_KEYWORDS)
     if kw:
@@ -265,10 +212,6 @@ def _reject_paramedical(job: dict) -> tuple[str, str] | None:
 
 
 def _reject_title(job: dict) -> tuple[str, str] | None:
-    """
-    Retourne (categorie, raison) si le titre contient un mot-clé
-    de niveau insuffisant, None sinon.
-    """
     title = _text(job, "titre")
     kw = _check_keywords(title, REJECT_TITLE_KEYWORDS)
     if kw:
@@ -277,6 +220,7 @@ def _reject_title(job: dict) -> tuple[str, str] | None:
             f"Auto-reject titre : '{kw}' détecté",
         )
     return None
+
 
 def run_filter(conn, limit: int = None) -> dict:
     groq_client = None
@@ -291,6 +235,7 @@ def run_filter(conn, limit: int = None) -> dict:
     total = len(jobs)
 
     stats = {
+        "total": total,
         "auto_passed": 0,
         "fallback_passed": 0,
         "rejected": 0,
@@ -307,14 +252,14 @@ def run_filter(conn, limit: int = None) -> dict:
         titre = job.get("titre", "")[:60]
 
         try:
-            # ── 1. Auto-pass Bac+5 ──────────────────────────────
+            # ── 1. Auto-pass Bac+5
             reason = _auto_pass(job)
             if reason:
                 update_ai_filter(conn, job_id, "pass", reason)
                 stats["auto_passed"] += 1
                 continue
 
-            # ── 2. Reject titre ──────────────────────────────────
+            # ── 2. Reject titre
             result = _reject_title(job)
             if result:
                 cat, reason = result
@@ -322,7 +267,7 @@ def run_filter(conn, limit: int = None) -> dict:
                 stats["rejected"] += 1
                 continue
 
-            # ── 3. Reject paramédical ────────────────────────────
+            # ── 3. Reject paramédical
             result = _reject_paramedical(job)
             if result:
                 cat, reason = result
@@ -330,7 +275,7 @@ def run_filter(conn, limit: int = None) -> dict:
                 stats["rejected"] += 1
                 continue
 
-            # ── 4. Reject filière ────────────────────────────────
+            # ── 4. Reject filière
             result = _reject_filiere(job)
             if result:
                 cat, reason = result
@@ -338,7 +283,7 @@ def run_filter(conn, limit: int = None) -> dict:
                 stats["rejected"] += 1
                 continue
 
-            # ── 5. Filtre IA ─────────────────────────────────────
+            # ── 5. Filtre IA
             if groq_client and not daily_limit_hit:
                 try:
                     decision, categorie, raison = _ai_filter(job, groq_client)
@@ -349,7 +294,6 @@ def run_filter(conn, limit: int = None) -> dict:
                         stats["ai_rejected"] += 1
                         logger.debug(f"  ❌ IA [{job_id}] {titre} — {raison}")
                     elif decision == "error":
-                        # On ne touche pas à l'offre — elle reste NULL et sera reprise à la prochaine run
                         stats["ai_errors"] += 1
                         logger.debug(f"  ⏳ IA error [{job_id}] {titre} — laissé à trier")
                     else:
@@ -357,23 +301,19 @@ def run_filter(conn, limit: int = None) -> dict:
                         stats["ai_passed"] += 1
                         logger.debug(f"  ✅ IA [{job_id}] {titre} — {raison}")
 
-                # APRÈS
                 except RuntimeError as e:
                     logger.error(f"Limite Groq TPD : {e}")
                     daily_limit_hit = True
-                    # On ne touche pas — sera repris à la prochaine run
                     logger.info(f"  ⏳ [{job_id}] laissé à trier (limite Groq journalière)")
 
-            # APRÈS
-                else:
-                    # IA indisponible ou limite atteinte — on laisse à trier
-                    logger.debug(f"  ⏳ [{job_id}] laissé à trier (IA indisponible)")
+            else:
+                # IA indisponible ou limite atteinte — on laisse à trier
+                logger.debug(f"  ⏳ [{job_id}] laissé à trier (IA indisponible)")
 
         except Exception as e:
             logger.error(f"  ⚠️  Erreur sur job {job_id} : {e}")
             stats["errors"] += 1
 
-    # Résumé
     kept = stats["auto_passed"] + stats["fallback_passed"]
     ratio = (kept / total * 100) if total else 0
     print(f"\n📊 Résumé filtre HCL :")
@@ -386,10 +326,6 @@ def run_filter(conn, limit: int = None) -> dict:
 
     return stats
 
-
-# ─────────────────────────────────────────────
-# USAGE DIRECT (debug)
-# ─────────────────────────────────────────────
 
 if __name__ == "__main__":
     import os
