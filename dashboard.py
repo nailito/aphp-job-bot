@@ -220,7 +220,7 @@ PAGES_SHARED = [
     "🔍 Explorer les offres",
     "✅ Offres acceptées par le filtre",
     "📰 Rapport du jour",
-]f
+]
 
 PAGES_APHP = [
     "🚀 À postuler",
