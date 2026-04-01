@@ -262,14 +262,13 @@ if page == "📊 Tableau de bord":
     try:
         if source == "APHP":
             runs = pd.read_sql(
-                "SELECT * FROM pipeline_runs ORDER BY run_date DESC LIMIT 1", conn
+                "SELECT * FROM pipeline_runs WHERE source = 'aphp' ORDER BY run_at DESC LIMIT 1", conn
             )
             if not runs.empty:
                 last        = runs.iloc[0]
-                run_date_str = str(last["run_date"])[:16].replace("T", " ") if last["run_date"] is not None else "–"
-                date_fmt     = run_date_str[:10].replace("-", "/")
-                heure_fmt    = run_date_str[11:16].replace(":", "h")
-                is_ok        = str(last["status"]).startswith("success") or last["status"] == "no_new_offers"
+                run_date_str = str(last["run_at"])[:16].replace("T", " ") if last["run_at"] is not None else "–"
+                ...
+                is_ok = str(last.get("status","")).startswith("success") or last.get("status") == "no_new_offers"
                 st.info(f"{'✅' if is_ok else '❌'} Dernière actualisation le **{date_fmt}** à **{heure_fmt}** — `{last['status']}`")
         else:
             runs = pd.read_sql(
@@ -657,7 +656,9 @@ elif page == "📰 Rapport du jour":
     conn = get_connection()
     try:
         if source == "APHP":
-            runs = pd.read_sql("SELECT * FROM pipeline_runs ORDER BY run_date DESC LIMIT 30", conn)
+            runs = pd.read_sql(
+                "SELECT * FROM pipeline_runs WHERE source = 'aphp' ORDER BY run_at DESC LIMIT 30", conn
+            )
         else:
             runs = pd.read_sql(
                 "SELECT * FROM pipeline_runs WHERE source = 'hcl' ORDER BY run_at DESC LIMIT 30", conn
@@ -675,13 +676,13 @@ elif page == "📰 Rapport du jour":
     last = runs.iloc[0]
 
     if source == "APHP":
-        run_date = str(last["run_date"])[:10] if last["run_date"] is not None else "–"
-        n_new_last  = last["n_new"]
-        n_scr_last  = last["n_scraped"]
-        n_rem_last  = last["n_removed"]
-        n_pass_last = last["n_passed_ai"]
-        n_scr_val   = last["n_scored"]
-        status_val  = last["status"]
+        run_date    = str(last["run_at"])[:10] if last["run_at"] is not None else "–"
+        n_new_last  = last.get("new_offers", 0)
+        n_scr_last  = last.get("total_scraped", 0)
+        n_rem_last  = last.get("removed_offers", 0)
+        n_pass_last = last.get("ai_passed", 0)
+        n_scr_val   = last.get("scored", 0)
+        status_val  = last.get("status", "–")
         dur_col     = "duration_sec"
     else:
         run_date    = str(last["run_at"])[:10]
@@ -802,10 +803,22 @@ elif page == "📰 Rapport du jour":
     st.subheader("📈 Historique des runs")
 
     if source == "APHP":
-        runs_d = runs[["run_date","n_new","n_removed","n_passed_ai","n_scored","status","duration_sec"]].copy()
-        runs_d["run_date"]     = runs_d["run_date"].str[:16]
-        runs_d["duration_sec"] = runs_d["duration_sec"].apply(lambda x: f"{x}s")
-        runs_d.columns = ["Date","Nouvelles","Retirées","Passées","Scorées","Statut","Durée"]
+        col_map_aphp = {
+            "run_at":         "Date",
+            "new_offers":     "Nouvelles",
+            "removed_offers": "Retirées",
+            "ai_passed":      "Passées",
+            "scored":         "Scorées",
+            "status":         "Statut",
+            "duration_sec":   "Durée",
+        }
+        available = {k: v for k, v in col_map_aphp.items() if k in runs.columns}
+        runs_d = runs[list(available.keys())].copy()
+        runs_d.columns = list(available.values())
+        if "Date" in runs_d.columns:
+            runs_d["Date"] = runs_d["Date"].astype(str).str[:16]
+        if "Durée" in runs_d.columns:
+            runs_d["Durée"] = runs_d["Durée"].apply(lambda x: f"{x}s" if pd.notna(x) else "–")
     else:
         col_map = {
             "run_at":           "Date",
