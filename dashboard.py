@@ -732,7 +732,7 @@ elif page == "📰 Rapport du jour":
                 df_p = df_p.sort_values("score", ascending=False, na_position="last")
                 for _, row in df_p.iterrows():
                     score   = int(row["score"]) if pd.notna(row.get("score")) else "–"
-                    prio    = row.get("priorite", "–")
+                    date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                     emoji   = "🟢" if isinstance(score, int) and score >= 80 else "🟡" if isinstance(score, int) and score >= 60 else "⚪"
                     loc     = row.get("hopital") or row.get("location","")
                     header  = f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {loc}" if score != "–" else f"⚪ **{row['title']}** — {loc}"
@@ -741,7 +741,7 @@ elif page == "📰 Rapport du jour":
                         if score != "–":
                             c1, c2 = st.columns(2)
                             c1.metric("Score", f"{score}/100")
-                            c2.metric("Priorité", prio)
+                            c2.metric("Publiée le", date_pub)
                         if pd.notna(row.get("score_raison")) and row["score_raison"]:
                             st.info(row["score_raison"])
                             try:
