@@ -10,7 +10,7 @@ import json
 import re
 import time
 import os
-from datetime import datetime, timedelta, date
+from datetime import datetime, timezone, timedelta, date
 from groq import Groq
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -124,6 +124,20 @@ def _ai_filter(job: dict, client: Groq) -> tuple[str, str | None, str]:
                 break
 
     return "error", None, "Erreur LLM — passage par défaut"
+
+
+def is_too_old(job: dict, max_days: int = 183) -> bool:
+    """Retourne True si l'offre a été publiée il y a plus de max_days jours (défaut : 6 mois)."""
+    raw = job.get("date_publication")
+    if not raw:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(raw)[:10])
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).days > max_days
+    except Exception:
+        return False
 
 
 PASS_KEYWORDS = [
@@ -349,17 +363,14 @@ def run_filter(conn, limit: int = None) -> dict:
 
         try:
             # ── 0. Reject offre trop ancienne (> 6 mois)
-            date_pub = job.get("date_publication")
-            if date_pub:
-                try:
-                    age = date.today() - date.fromisoformat(str(date_pub)[:10])
-                    if age.days > 183:
-                        update_ai_filter(conn, job_id, "reject", "Auto-reject : offre de plus de 6 mois")
-                        stats["rejected"] += 1
-                        logger.debug(f"  ❌ Trop ancienne [{job_id}] {titre}")
-                        continue
-                except ValueError:
-                    logger.warning(f"  ⚠️  date_publication invalide [{job_id}] : {date_pub}")
+            if is_too_old(job):
+                update_ai_filter(
+                    conn, job_id, "reject",
+                    f"Auto-reject : offre de plus de 6 mois ({job.get('date_publication', '')[:10]})"
+                )
+                stats["rejected"] += 1
+                logger.debug(f"  ❌ Trop ancienne [{job_id}] {titre}")
+                continue
 
             # ── 1. Reject contrat (stage, alternance)
             result = _reject_contrat(job)
