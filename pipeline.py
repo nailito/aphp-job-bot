@@ -3,7 +3,7 @@
 import time
 import os
 import psycopg as psycopg2
-from datetime import datetime
+from datetime import datetime, timezone
 from notifier import send_telegram
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
