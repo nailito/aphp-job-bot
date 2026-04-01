@@ -17,6 +17,7 @@ Aucun fetch de page individuelle nécessaire : tout est dans l'API.
 import logging
 import time
 from html import unescape
+import datetime
 
 import requests
 from bs4 import BeautifulSoup
@@ -180,6 +181,8 @@ def parse_offer(
         Dict avec les champs : id, titre, url, localisation, contrats,
         duree, date_debut, description (None si offre déjà connue).
     """
+    import datetime
+
     offer_id = raw["id"]
 
     # --- Titre
@@ -194,22 +197,19 @@ def parse_offer(
     localisation = ", ".join(localisation_labels)
 
     # --- Taxonomies : types de contrat
-    # L'API peut exposer la taxonomie sous plusieurs noms selon la config WP.
-    # On essaie les deux champs connus.
     contrat_ids = (
         raw.get(TAXONOMY_MAP["contrats"], [])
         or raw.get("job_contract_type", [])
         or []
     )
     contrat_labels = resolve_term_labels(session, TAXONOMY_MAP["contrats"], contrat_ids)
-    # Fallback sur job_contract_type si le premier endpoint échoue
     if not contrat_labels and raw.get("job_contract_type"):
         contrat_labels = resolve_term_labels(
             session, "job_contract_type", raw["job_contract_type"]
         )
     contrats = ", ".join(contrat_labels)
 
-    # --- Filière (injectée dans la description si présente, pas colonne dédiée)
+    # --- Filière
     filiere_ids = raw.get(TAXONOMY_MAP["filiere"], []) or []
     filiere_labels = resolve_term_labels(session, TAXONOMY_MAP["filiere"], filiere_ids)
     filiere = ", ".join(filiere_labels)
@@ -217,19 +217,22 @@ def parse_offer(
     # --- Meta
     meta = raw.get("meta", {}) or {}
     duree = str(meta.get("job_offer_duration") or "").strip()
-    date_debut = str(meta.get("job_creation_date") or "").strip()
 
-    # --- Description (uniquement pour les nouvelles offres)
-    # parse_offer() — remplacer le bloc description
+    # --- Date de début : job_starting_date est un Unix timestamp (int)
+    starting_ts = meta.get("job_starting_date") or 0
+    if starting_ts:
+        date_debut = datetime.datetime.utcfromtimestamp(starting_ts).strftime("%Y-%m-%d")
+    else:
+        date_debut = ""
+
+    # --- Date de publication : "modified" reflète la date visible sur la page
+    date_publication = raw.get("modified", "")[:10] or None
 
     # --- Description (uniquement pour les nouvelles offres)
     if offer_id not in known_ids:
         description = build_description(raw)
-        # SUPPRIMÉ : l'injection "Filière : {filiere}\n\n" dans la description
     else:
         description = None
-
-    date_publication = raw.get("date", "")[:10] or None  # format "2024-03-15T10:30:00" → "2024-03-15"
 
     return {
         "id": offer_id,

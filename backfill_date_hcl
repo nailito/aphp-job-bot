@@ -1,6 +1,7 @@
 # backfill_dates_hcl.py
 import os
 import requests
+import datetime
 import psycopg as psycopg2
 from psycopg.rows import dict_row
 
@@ -8,22 +9,37 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 BASE_URL = "https://chu-lyon.nous-recrutons.fr/wp-json/wp/v2/job"
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
-def get_date(session, job_id):
+def get_dates(session, job_id):
+    """Retourne (date_publication, date_debut) depuis l'API HCL."""
     try:
         resp = session.get(
             f"{BASE_URL}/{job_id}",
-            params={"_fields": "id,date"},
+            params={"_fields": "id,modified,meta"},
             headers=HEADERS,
             timeout=15,
         )
         if resp.status_code == 404:
-            return None  # offre supprimée côté HCL
+            return None, None  # offre supprimée côté HCL
         resp.raise_for_status()
-        date_str = resp.json().get("date", "")
-        return date_str[:10] if date_str else None
+        data = resp.json()
+
+        # date_publication : "modified" reflète la date visible sur la page
+        modified = data.get("modified", "")
+        date_publication = modified[:10] if modified else None
+
+        # date_debut : job_starting_date est un Unix timestamp
+        meta = data.get("meta", {}) or {}
+        starting_ts = meta.get("job_starting_date") or 0
+        if starting_ts:
+            date_debut = datetime.datetime.utcfromtimestamp(starting_ts).strftime("%Y-%m-%d")
+        else:
+            date_debut = None
+
+        return date_publication, date_debut
+
     except Exception as e:
         print(f"  ⚠️  Erreur id={job_id} : {e}")
-        return None
+        return None, None
 
 conn = psycopg2.connect(DATABASE_URL, prepare_threshold=None)
 with conn.cursor(row_factory=dict_row) as cur:
@@ -36,15 +52,20 @@ session = requests.Session()
 updated = 0
 
 for job_id in ids:
-    date = get_date(session, job_id)
-    if date:
+    date_publication, date_debut = get_dates(session, job_id)
+    if date_publication:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE hcl_jobs SET date_publication = %s WHERE id = %s",
-                (date, job_id)
+                """
+                UPDATE hcl_jobs
+                SET date_publication = %s,
+                    date_debut = COALESCE(NULLIF(date_debut, ''), %s)
+                WHERE id = %s
+                """,
+                (date_publication, date_debut, job_id)
             )
         conn.commit()
-        print(f"  ✅ {job_id} → {date}")
+        print(f"  ✅ {job_id} → publication: {date_publication}, début: {date_debut}")
         updated += 1
     else:
         print(f"  ⏭️  {job_id} → pas de date (offre peut-être retirée)")
