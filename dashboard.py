@@ -1277,11 +1277,10 @@ elif page == "📝 À évaluer HCL":
  
                 with st.expander(header):
                     date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
-                    c1, c2, c3, c4 = st.columns(4)
+                    c1, c2, c3 = st.columns(3)
                     c1.metric("Score",             f"{score_val}/100" if score_val else "–")
-                    c2.metric("Priorité",          prio)
-                    c3.metric("Contrat",           row.get("contrat","–") or "–")
-                    c4.metric("Publiée le",        date_pub)
+                    c2.metric("Contrat",           row.get("contrat","–") or "–")
+                    c3.metric("Publiée le",        date_pub)
  
                     # Analyse IA
                     if pd.notna(row.get("score_raison")) and row["score_raison"]:
@@ -1419,12 +1418,12 @@ elif page == "🚀 À postuler HCL":
         st.markdown(f"📍 **{job['location']}** · 📄 {job.get('contrat','–')}")
  
         score_val = int(job["score"]) if pd.notna(job.get("score")) else "–"
-        prio      = job.get("priorite","–")
+        date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
         emoji     = "🟢" if isinstance(score_val, int) and score_val >= 80 else "🟡" if isinstance(score_val, int) and score_val >= 60 else "🔴"
  
         c1, c2 = st.columns(2)
         c1.metric("Score",    f"{emoji} {score_val}/100" if score_val != "–" else "–")
-        c2.metric("Priorité", prio)
+        c2.metric("Publiée le", date_pub)
  
         if pd.notna(job.get("score_raison")) and job["score_raison"]:
             with st.expander("🧠 Analyse IA"):
