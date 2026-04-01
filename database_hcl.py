@@ -85,11 +85,13 @@ def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
                     INSERT INTO hcl_jobs (
                         id, titre, url, localisation, contrats,
                         filiere, duree, date_debut, description,
+                        date_publication, date_modification,
                         status, miss_count,
                         first_seen_at, last_seen_at
                     ) VALUES (
                         %(id)s, %(titre)s, %(url)s, %(localisation)s, %(contrats)s,
                         %(filiere)s, %(duree)s, %(date_debut)s, %(description)s,
+                        %(date_publication)s, %(date_modification)s,
                         'active', 0,
                         %(now)s, %(now)s
                     )
@@ -111,6 +113,8 @@ def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
                             duree = %(duree)s,
                             date_debut = %(date_debut)s,
                             description = %(description)s,
+                            date_publication = %(date_publication)s,
+                            date_modification = %(date_modification)s,
                             status = 'active',
                             miss_count = 0,
                             last_seen_at = %(now)s
@@ -126,6 +130,8 @@ def upsert_jobs(conn, scraped_offers: list[dict]) -> dict:
                             filiere = %(filiere)s,
                             duree = %(duree)s,
                             date_debut = %(date_debut)s,
+                            date_publication = %(date_publication)s,
+                            date_modification = %(date_modification)s,
                             status = 'active',
                             miss_count = 0,
                             last_seen_at = %(now)s
@@ -285,12 +291,13 @@ def delete_feedback_hcl(conn, job_id: int) -> None:
     conn.commit()
     logger.info(f"Feedback HCL supprimé : job_id={job_id}")
 
+
 def delete_old_offers(conn, months: int = 6) -> int:
-    """Supprime les offres dont date_publication est antérieure à N mois."""
+    """Supprime les offres dont date_modification est antérieure à N mois."""
     with conn.cursor() as cur:
         cur.execute("""
-            DELETE FROM offers
-            WHERE date_publication < NOW() - INTERVAL '%s months'
+            DELETE FROM hcl_jobs
+            WHERE date_modification < NOW() - INTERVAL '%s months'
         """, (months,))
         deleted = cur.rowcount
     conn.commit()

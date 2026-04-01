@@ -127,8 +127,12 @@ def _ai_filter(job: dict, client: Groq) -> tuple[str, str | None, str]:
 
 
 def is_too_old(job: dict, max_days: int = 183) -> bool:
-    """Retourne True si l'offre a été publiée il y a plus de max_days jours (défaut : 6 mois)."""
-    raw = job.get("date_publication")
+    """
+    Retourne True si l'offre n'a pas été modifiée depuis plus de max_days jours (défaut : 6 mois).
+    Utilise date_modification en priorité, date_publication en fallback.
+    Retourne False si aucune date n'est disponible.
+    """
+    raw = job.get("date_modification") or job.get("date_publication")
     if not raw:
         return False
     try:
@@ -241,7 +245,7 @@ REJECT_FILIERES = [
     "Orthophonie",
 ]
 
-# Valeurs à rejeter dans le champ contrat (recherche partielle, insensible à la casse)
+# Valeurs à rejeter dans le champ contrats (recherche partielle, insensible à la casse)
 REJECT_CONTRATS = [
     "stage",
     "alternance",
@@ -269,14 +273,15 @@ def _auto_pass(job: dict) -> str | None:
 
 
 def _reject_contrat(job: dict) -> tuple[str, str] | None:
-    contrat = str(job.get("contrat") or "").strip().lower()
-    if not contrat:
+    # Champ correct : "contrats" (avec s)
+    contrats = str(job.get("contrats") or "").strip().lower()
+    if not contrats:
         return None
     for c in REJECT_CONTRATS:
-        if c.lower() in contrat:
+        if c.lower() in contrats:
             return (
                 "contrat_exclu",
-                f"Auto-reject contrat : '{c}' détecté dans '{contrat}'",
+                f"Auto-reject contrat : '{c}' détecté dans '{contrats}'",
             )
     return None
 
@@ -362,11 +367,12 @@ def run_filter(conn, limit: int = None) -> dict:
         titre = job.get("titre", "")[:60]
 
         try:
-            # ── 0. Reject offre trop ancienne (> 6 mois)
+            # ── 0. Reject offre trop ancienne (> 6 mois sans modification)
             if is_too_old(job):
+                date_ref = job.get("date_modification") or job.get("date_publication") or ""
                 update_ai_filter(
                     conn, job_id, "reject",
-                    f"Auto-reject : offre de plus de 6 mois ({job.get('date_publication', '')[:10]})"
+                    f"Auto-reject : offre non modifiée depuis plus de 6 mois ({str(date_ref)[:10]})"
                 )
                 stats["rejected"] += 1
                 logger.debug(f"  ❌ Trop ancienne [{job_id}] {titre}")

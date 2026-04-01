@@ -179,7 +179,8 @@ def parse_offer(
 
     Returns:
         Dict avec les champs : id, titre, url, localisation, contrats,
-        duree, date_debut, description (None si offre déjà connue).
+        duree, date_debut, date_publication, date_modification, description.
+        description = None si offre déjà connue.
     """
     import datetime
 
@@ -225,8 +226,11 @@ def parse_offer(
     else:
         date_debut = ""
 
-    # --- Date de publication : "modified" reflète la date visible sur la page
-    date_publication = raw.get("modified", "")[:10] or None
+    # --- Date de publication : champ "date" = date de création WP
+    date_publication = raw.get("date", "")[:10] or None
+
+    # --- Date de modification : champ "modified" = dernière mise à jour WP
+    date_modification = raw.get("modified", "")[:10] or None
 
     # --- Description (uniquement pour les nouvelles offres)
     if offer_id not in known_ids:
@@ -244,6 +248,7 @@ def parse_offer(
         "duree": duree,
         "date_debut": date_debut,
         "date_publication": date_publication,
+        "date_modification": date_modification,
         "description": description,
     }
 
@@ -272,7 +277,7 @@ def fetch_all_offers_raw(session: requests.Session) -> list[dict]:
                     "orderby": "date",
                     # Demande les champs meta dans la réponse
                     "_fields": (
-                        "id,date,link,title,content,meta,"
+                        "id,date,modified,link,title,content,meta,"
                         "job_custom_chulyon_typedecontrat,"
                         "job_custom_hcl_filiere,"
                         "job_custom_hcl_hopital,"
@@ -327,7 +332,8 @@ def run_scraper(known_ids: set[int]) -> list[dict]:
 
     Returns:
         Liste de dicts normalisés, prêts pour database_hcl.upsert_jobs.
-        Champs : id, titre, url, localisation, contrats, duree, date_debut, description.
+        Champs : id, titre, url, localisation, contrats, duree, date_debut,
+                 date_publication, date_modification, description.
         description = None pour les offres déjà connues.
     """
     session = requests.Session()
@@ -375,4 +381,4 @@ if __name__ == "__main__":
         ex = results[0]
         for k, v in ex.items():
             val = (str(v)[:200] + "...") if v and len(str(v)) > 200 else (v or "(vide)")
-            print(f"  {k:15} : {val}")
+            print(f"  {k:20} : {val}")
