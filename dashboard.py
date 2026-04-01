@@ -1086,7 +1086,6 @@ elif page == "📝 À évaluer":
 
             for idx, row in df_a_evaluer.iterrows():
                 score_label = f"🎯 {int(row['score'])}/100 — " if pd.notna(row.get("score")) else ""
-                prio_label  = f"[{row['priorite']}] " if pd.notna(row.get("priorite")) and row.get("priorite") not in ("–", None) else ""
                 job_id      = row["id"]
                 job_key     = f"{idx}_{job_id}"
 
@@ -1094,7 +1093,7 @@ elif page == "📝 À évaluer":
                     date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Score", f"{int(row['score'])}/100" if pd.notna(row.get("score")) else "–")
-                    c2.metric("Priorité", row.get("priorite","–"))
+                    c2.metric("Contrat")
                     c3.metric("Publiée le", date_pub)
 
                     if pd.notna(row.get("score_raison")):
