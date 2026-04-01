@@ -735,7 +735,7 @@ elif page == "📰 Rapport du jour":
                     date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                     emoji   = "🟢" if isinstance(score, int) and score >= 80 else "🟡" if isinstance(score, int) and score >= 60 else "⚪"
                     loc     = row.get("hopital") or row.get("location","")
-                    header  = f"{emoji} {score}/100 [{prio}] — **{row['title']}** — {loc}" if score != "–" else f"⚪ **{row['title']}** — {loc}"
+                    header  = f"{emoji} {score}/100 [{date_pub}] — **{row['title']}** — {loc}" if score != "–" else f"⚪ **{row['title']}** — {loc}"
 
                     with st.expander(header):
                         if score != "–":
