@@ -1093,7 +1093,7 @@ elif page == "📝 À évaluer":
                     date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Score", f"{int(row['score'])}/100" if pd.notna(row.get("score")) else "–")
-                    c2.metric("Contrat")
+                    c2.metric("Contrat",           row.get("contrat","–") or "–")
                     c3.metric("Publiée le", date_pub)
 
                     if pd.notna(row.get("score_raison")):
