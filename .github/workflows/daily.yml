@@ -25,6 +25,7 @@ jobs:
         run: playwright install --with-deps
 
       - name: 🚀 Run pipeline APHP
+        continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -33,6 +34,7 @@ jobs:
         run: python pipeline.py
       
       - name: 🚀 Run pipeline HCL
+        continue-on-error: true
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
