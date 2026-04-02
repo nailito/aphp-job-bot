@@ -1089,7 +1089,7 @@ elif page == "📝 À évaluer":
                 job_id      = row["id"]
                 job_key     = f"{idx}_{job_id}"
 
-                with st.expander(f"{score_label}{prio_label}**{row['title']}** — {row['hopital']}"):
+                with st.expander(f"{score_label}**{row['title']}** — {row['hopital']}"):
                     date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Score", f"{int(row['score'])}/100" if pd.notna(row.get("score")) else "–")
