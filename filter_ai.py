@@ -50,6 +50,14 @@ REJECT_TITLE_KEYWORDS = [
     "enseignant en activités physiques",
 ]
 
+REJECT_DIPLOMA_LEVEL_KEYWORDS = [
+    "bac+2", "bac +2", "bac + 2",
+    "bac+3", "bac +3", "bac + 3",
+    "dut", "bts",
+    "bac pro", "bac pro assp", "bac pro sapat",
+    "licence professionnelle",
+]
+
 def get_connection():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
@@ -103,6 +111,13 @@ def check_pass_keywords(job: dict) -> str | None:
     text = (job.get("title", "") + " " + job.get("description", "")).lower()
     for kw in PASS_KEYWORDS:
         if kw in text:
+            return kw
+    return None
+
+def check_diploma_level(job: dict) -> str | None:
+    text = (job.get("title", "") + " " + job.get("description", "")).lower()
+    for kw in REJECT_DIPLOMA_LEVEL_KEYWORDS:
+        if kw.lower() in text:
             return kw
     return None
 
@@ -217,6 +232,7 @@ def run_filter_1(limit: int = None):
             continue
 
         title_lower = job.get("title", "").lower()
+
         kw_reject = next((kw for kw in REJECT_TITLE_KEYWORDS if kw in title_lower), None)
         if kw_reject:
             mark_rejected(job["id"], "surqualification",
@@ -224,6 +240,17 @@ def run_filter_1(limit: int = None):
             rejected += 1
             print(f"    ❌ Auto-reject titre : '{kw_reject}'")
             continue
+
+        # ── NOUVEAU : Reject niveau diplôme (BTS, DUT, Bac+2, Bac+3...)
+        kw_diploma = check_diploma_level(job)
+        if kw_diploma:
+            mark_rejected(job["id"], "surqualification",
+                          f"Auto-reject niveau diplôme : '{kw_diploma}' mentionné comme prérequis")
+            rejected += 1
+            print(f"    ❌ Auto-reject diplôme : '{kw_diploma}'")
+            continue
+
+        kw_found = check_pass_keywords(job)   # ← déjà existant, rien ne change après
 
         prompt = PROMPT_TEMPLATE.format(
             title=job.get("title", ""),
