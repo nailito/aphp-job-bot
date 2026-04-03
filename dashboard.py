@@ -767,10 +767,12 @@ elif page == "📰 Rapport du jour":
                     cat    = CATEGORY_LABELS.get(row.get("rejection_category",""), row.get("rejection_category",""))
                     raison = row.get("rejection_reason") or "–"
                     loc    = row.get("hopital") or row.get("location","")
+                    date_pub = row["date_publication"].strftime("%d/%m/%Y") if pd.notna(row.get("date_publication")) else "–"
 
                     with st.expander(f"❌ **{row['title']}** — {loc}"):
                         st.markdown(f"**Catégorie :** {cat}")
                         st.markdown(f"**Raison :** {raison}")
+                        st.markdown(f"**Publiée le :** {date_pub}")
                         st.link_button("🔗 Voir l'offre →", row["url"], use_container_width=True, type="primary")
 
         with tab3:
@@ -1251,7 +1253,7 @@ elif page == "📝 À évaluer HCL":
             col_tri, _ = st.columns([1, 3])
             tri = col_tri.selectbox(
                 "Trier par",
-                ["Score (meilleur en premier)", "Score (moins bon en premier)", "Date de publication (plus récent)"],
+                [ "Date de publication (plus récent)","Score (meilleur en premier)", "Score (moins bon en premier)"],
                 key="tri_eval_hcl",
             )
  
