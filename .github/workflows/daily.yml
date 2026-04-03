@@ -2,7 +2,7 @@ name: 🏥 Pipeline daily
 
 on:
   schedule:
-    - cron: '0 7,11,16,19 * * *'  # 8h, 12h, 17h, 20h Paris
+    - cron: '0 5,8,11,14,17 * * *'
   workflow_dispatch:
 
 jobs:
