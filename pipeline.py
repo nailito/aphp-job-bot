@@ -3,6 +3,7 @@ import os
 import psycopg as psycopg2
 from datetime import datetime, timezone
 from notifier import send_telegram
+from zoneinfo import ZoneInfo
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -96,9 +97,9 @@ def fetch_new_jobs(new_ids: set):
     return execute_with_retry(_fn)
 
 def run_pipeline():
-    notify(f"🚀 Pipeline lancé — {datetime.now().strftime('%H:%M')}")
+    notify(f"🚀 Pipeline lancé — {datetime.now(ZoneInfo('Europe/Paris')).strftime('%H:%M')}")
     print("=" * 60)
-    print(f"🏥 Pipeline APHP — {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    print(f"🏥 Pipeline APHP — {datetime.now(ZoneInfo('Europe/Paris')).strftime('%d/%m/%Y %H:%M')}")
     print("=" * 60)
 
     start = time.time()
