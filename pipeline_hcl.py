@@ -14,6 +14,7 @@ import os
 import time
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import psycopg as psycopg2
 
@@ -88,7 +89,7 @@ def safe_step(step_name, func, *args, **kwargs):
 def run_pipeline():
 
     start = time.time()
-    now_str = datetime.now().strftime('%d/%m/%Y %H:%M')
+    now_str = datetime.now(ZoneInfo("Europe/Paris")).strftime('%d/%m/%Y %H:%M')
 
     notify(f"🏥 Pipeline HCL lancé — {now_str}")
     print("=" * 60)
