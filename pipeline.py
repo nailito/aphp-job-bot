@@ -1,5 +1,3 @@
-#pipeline aphp
-
 import time
 import os
 import psycopg as psycopg2
@@ -16,10 +14,35 @@ def notify(msg):
         print(f"(Telegram failed: {e})")
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+    """Connexion fraîche avec keepalive TCP pour éviter les coupures SSL."""
+    conn = psycopg2.connect(
+        DATABASE_URL,
+        sslmode="require",
+        # Keepalive TCP : ping toutes les 30s si idle
+        keepalives=1,
+        keepalives_idle=30,
+        keepalives_interval=10,
+        keepalives_count=5,
+        # Timeout de connexion
+        connect_timeout=30,
+    )
+    return conn
+
+def execute_with_retry(fn, retries=3, delay=5):
+    """Exécute fn(conn) avec retry sur erreur de connexion."""
+    for attempt in range(retries):
+        try:
+            with get_connection() as conn:
+                return fn(conn)
+        except psycopg2.OperationalError as e:
+            if attempt < retries - 1:
+                print(f"   ⚠️ DB error (tentative {attempt+1}/{retries}): {e}")
+                time.sleep(delay)
+            else:
+                raise
 
 def save_run(n_scraped, n_new, n_removed, n_passed_ai, n_rejected_ai, n_scored, status, duration):
-    with get_connection() as conn:
+    def _fn(conn):
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO pipeline_runs
@@ -33,23 +56,44 @@ def save_run(n_scraped, n_new, n_removed, n_passed_ai, n_rejected_ai, n_scored, 
                 status, duration
             ))
         conn.commit()
-        
+    execute_with_retry(_fn)
+
 def get_counts(new_ids: set):
     if not new_ids:
         return 0, 0, 0
     placeholders = ",".join(["%s"] * len(new_ids))
-    with get_connection() as conn:
+
+    def _fn(conn):
         with conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM jobs WHERE id IN ({placeholders}) AND rejection_category = 'passed_filter_1'", list(new_ids))
             passed_ai = cur.fetchone()[0]
-
             cur.execute(f"SELECT COUNT(*) FROM jobs WHERE id IN ({placeholders}) AND rejection_category IN ('diplome_paramedical','surqualification','profil_inadequat')", list(new_ids))
             rej_ai = cur.fetchone()[0]
-
             cur.execute(f"SELECT COUNT(*) FROM jobs WHERE id IN ({placeholders}) AND score IS NOT NULL", list(new_ids))
             scored = cur.fetchone()[0]
+        return passed_ai, rej_ai, scored
 
-    return passed_ai, rej_ai, scored
+    return execute_with_retry(_fn)
+
+def fetch_new_jobs(new_ids: set):
+    """Récupère les jobs depuis la DB — connexion fraîche, indépendante du scraping."""
+    placeholders = ",".join(["%s"] * len(new_ids))
+    cols = ["id","title","metier","filiere","hopital","location",
+            "contrat","teletravail","horaire","temps_travail",
+            "date_publication","description","url"]
+
+    def _fn(conn):
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT id, title, metier, filiere, hopital, location,
+                       contrat, teletravail, horaire, temps_travail,
+                       date_publication, description, url
+                FROM jobs WHERE id IN ({placeholders})
+            """, list(new_ids))
+            rows = cur.fetchall()
+        return [dict(zip(cols, r)) for r in rows]
+
+    return execute_with_retry(_fn)
 
 def run_pipeline():
     notify(f"🚀 Pipeline lancé — {datetime.now().strftime('%H:%M')}")
@@ -76,6 +120,7 @@ def run_pipeline():
         jobs = scrape_jobs(APHP_JOBS_URL, max_pages=115)
         print(f"   ⏱ Scraping terminé en {int(time.time()-t0)}s")
 
+        # upsert_jobs ouvre sa propre connexion — pas de souci ici
         diff = upsert_jobs(jobs)
 
         n_scraped = len(jobs)
@@ -87,7 +132,7 @@ def run_pipeline():
 
         if n_new == 0:
             print("\n✅ Aucune nouvelle offre — pipeline terminé.")
-            notify("😴 Aucune nouvelle offre aujourd’hui")
+            notify("😴 Aucune nouvelle offre aujourd'hui")
             save_run(n_scraped, 0, n_removed, 0, 0, 0, "no_new_offers", int(time.time() - start))
             return
 
@@ -104,27 +149,13 @@ def run_pipeline():
 
         new_ids = {j["id"] for j in diff["new"]}
 
-        with get_connection() as conn:
-            with conn.cursor() as cur:
-                placeholders = ",".join(["%s"] * len(new_ids))
-                cur.execute(f"""
-                    SELECT id, title, metier, filiere, hopital, location,
-                           contrat, teletravail, horaire, temps_travail,
-                           date_publication, description, url
-                    FROM jobs WHERE id IN ({placeholders})
-                """, list(new_ids))
-                rows = cur.fetchall()
-
-        cols = ["id","title","metier","filiere","hopital","location",
-                "contrat","teletravail","horaire","temps_travail",
-                "date_publication","description","url"]
-        new_jobs = [dict(zip(cols, r)) for r in rows]
+        # ✅ Connexion fraîche, indépendante du scraping
+        new_jobs = fetch_new_jobs(new_ids)
 
         n_rej_metier = 0
 
         for i, job in enumerate(new_jobs, 1):
             print(f"   [{i}/{len(new_jobs)}] {job['title'][:60]}")
-            #notify("\n🚫 Étape 2 — Filtre métier/contrat...")
 
             if job.get("metier","") in EXCLUDED_METIERS:
                 mark_rejected(job["id"], "metier_exclu", f"Métier exclu : {job.get('metier','')}")
@@ -174,21 +205,15 @@ def run_pipeline():
         print(f"   ✅ {passed_ai} passées IA")
         print(f"   ❌ {rej_ai} rejetées IA")
         print(f"   🎯 {scored} scorées")
-        
-        notify(f"📊 Résumé final :")
-        notify(f"   🆕 {n_new} nouvelles")
-        notify(f"   ✅ {passed_ai} passées IA")
-        notify(f"   ❌ {rej_ai} rejetées IA")
-        notify(f"   🎯 {scored} scorées")
+
+        notify(f"📊 Résumé final :\n   🆕 {n_new} nouvelles\n   ✅ {passed_ai} passées IA\n   ❌ {rej_ai} rejetées IA\n   🎯 {scored} scorées")
 
         save_run(n_scraped, n_new, n_removed, passed_ai, rej_ai, scored, "success", duration)
 
         print(f"\n{'=' * 60}")
         print(f"✅ Pipeline terminé en {duration}s")
         print(f"{'=' * 60}")
-
         notify(f"\n✅ Pipeline terminé en {duration}s")
-
 
     except Exception as e:
         duration = int(time.time() - start)
