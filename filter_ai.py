@@ -1,15 +1,22 @@
-#filtre APHP
+"""
+filter_aphp.py
+"""
+
+import logging
+from tqdm import tqdm
+from database_aphp import get_offers_to_filter, update_ai_filter  # 1. Connexion externalisée
+
+logger = logging.getLogger(__name__)  # 9. Logger
+
 import json
 import re
 import time
 import os
-import psycopg as psycopg2
+from datetime import datetime, timezone
 from groq import Groq
-from config import GROQ_API_KEY
-from tqdm import tqdm
-from datetime import datetime, timezone, timedelta
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
 
 def notify(msg):
     print(msg)
@@ -18,15 +25,22 @@ def notify(msg):
         send_telegram(msg)
     except Exception as e:
         print(f"(Telegram failed: {e})")
-# ─────────────────────────
+
+
+# ─────────────────────────────────────────────
+# LISTES DE FILTRAGE
+# ─────────────────────────────────────────────
 
 PASS_KEYWORDS = [
-    "bac+5", "bac + 5", "diplôme d'ingénieur", "diplome d'ingenieur",
-    "école d'ingénieur", "ecole d'ingenieur", "ingénieur ou", "ingénieur et",
-    "grande école", "grande ecole", "école de commerce", "ecole de commerce",
-    "msc", "doctorat", "phd", "ph.d", "bac +5",
+    "bac+5", "bac + 5", "bac +5",
+    "diplôme d'ingénieur", "diplome d'ingenieur",
+    "école d'ingénieur", "ecole d'ingenieur",
+    "ingénieur ou", "ingénieur et",
+    "grande école", "grande ecole",
+    "école de commerce", "ecole de commerce",
+    "master", "msc", "doctorat", "phd", "ph.d",
+    "niveau 7", "niveau i", "niveau ii",
     "niveau ingénieur", "formation bac+5",
-    "diplôme de niveau", "niveau 7", "niveau i", "niveau ii",
 ]
 
 PASS_METIERS = [
@@ -39,15 +53,70 @@ PASS_METIERS = [
 ]
 
 REJECT_TITLE_KEYWORDS = [
-    "magasinier", "électricien", "plombier", "cuisinier",
-    "agent de restauration", "brancardier", "agent de stérilisation",
-    "agent logistique", "agent de service", "standardiste",
-    "agent d'accueil", "agent de facturation", "gestionnaire de stocks",
-    "agent d'entretien", "lingère", "chauffeur", "ambulancier",
-    "technicien polyvalent", "technicien de maintenance",
+    # Métiers du bâtiment / maintenance
+    "électricien", "plombier", "menuisier", "peintre", "soudeur",
+    "chauffagiste", "climaticien", "maçon", "serrurier",
+    "technicien de maintenance", "technicien polyvalent",
     "technicien biomédical", "technicien de laboratoire",
     "technicien en recherche", "technicien d'information médicale",
+    # Logistique / transport
+    "chauffeur", "ambulancier", "manutentionnaire", "magasinier",
+    "agent logistique", "agent de logistique",
+    "livreur", "coursier",
+    # Restauration / hôtellerie
+    "cuisinier", "cuisinière", "aide-cuisinier",
+    "agent de restauration", "agent restauration",
+    "plongeur",
+    # Nettoyage / entretien
+    "agent de service", "agent d'entretien", "agent de nettoyage",
+    "agent de propreté", "technicien de surface", "ouvrier d'entretien",
+    # Santé / soins de base
+    "brancardier", "agent de stérilisation",
+    "lingère", "aide-soignant",
+    # Sécurité
+    "agent de sécurité", "agent de surveillance",
+    # Administratif d'exécution
+    "standardiste", "agent d'accueil", "hôte d'accueil",
+    "agent de facturation", "gestionnaire de stocks",
+    "secrétaire médical", "secrétaire médicale",
+    # Profils hors ingénierie
+    "juriste", "avocat", "enseignant", "professeur", "formateur",
     "enseignant en activités physiques",
+    "ressources humaines", "rh", "recruteur", "chargé de recrutement",
+    # Médical
+    "médecin", "pharmacien", "pharmacienne", "psychologue",
+]
+
+# 3. Diplômes paramédicaux stricts — uniquement des diplômes, pas des noms de métiers
+# pour éviter les faux positifs sur des offres d'ingénieur mentionnant
+# ces métiers comme interlocuteurs.
+REJECT_PARAMEDICAL_KEYWORDS = [
+    "Diplôme Cadre de Santé",
+    # Diplômes infirmiers
+    "diplôme d'état infirmier", "diplome d'etat infirmier",
+    "diplôme d'état d'infirmier", "diplome d'etat d'infirmier",
+    "Diplôme Infirmier",
+    "d.e. infirmier", "d.e infirmier",
+    "ibode", "iade",
+    # Diplômes aides-soignants / auxiliaires
+    "diplôme d'état aide-soignant", "diplome d'etat aide-soignant",
+    "diplôme d'état d'aide-soignant",
+    "deas",   # Diplôme d'État d'Aide-Soignant
+    "deap",   # Diplôme d'État d'Auxiliaire de Puériculture
+    "auxiliaire de puériculture", "auxiliaire de puericulture",
+    # Diplômes sage-femme / maïeutique
+    "diplôme d'état de sage-femme", "diplome d'etat de sage-femme",
+    # Diplômes de rééducation
+    "diplôme d'état de masseur", "diplome d'etat de masseur",
+    "diplôme d'état de kinésithérapeute",
+    # Diplômes médico-technique / imagerie
+    "diplôme d'état de manipulateur", "diplome d'etat de manipulateur",
+    "dts manipulateur",
+    "electroradiologie", "électroradiologie",
+    # Cadre de santé / psychologie
+    "diplôme de cadre de santé", "diplome de cadre de sante",
+    "Master 2 de Psychologie", "DESS Psychologie", "école de psychologues",
+    "D.E.S",
 ]
 
 REJECT_DIPLOMA_LEVEL_KEYWORDS = [
@@ -58,70 +127,40 @@ REJECT_DIPLOMA_LEVEL_KEYWORDS = [
     "licence professionnelle",
 ]
 
-def get_connection():
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+# 2. Rejet par filière (équivalent APHP des filières paramédicales HCL)
+REJECT_FILIERES = [
+    "Infirmier",
+    "Aide-soignant",
+    "Sage-femme",
+    "Rééducation",
+    "Infirmier spécialisé",
+    "Métiers du soin",
+    "Secrétariat médical",
+    "Pharmacie",
+    "Médico-technique",
+    "Socio-éducatif, psychologue",
+    "Puériculture",
+    "Orthophonie",
+]
 
-def load_unfiltered_jobs() -> list[dict]:
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, title, metier, filiere, description
-                FROM jobs
-                WHERE status = 'active'
-                AND (rejection_category IS NULL OR rejection_category = 'a_trier')
-            """)
-            rows = cur.fetchall()
-    cols = ["id", "title", "metier", "filiere", "description"]
-    return [dict(zip(cols, r)) for r in rows]
-
-
-def is_too_old(job: dict, max_days: int = 90) -> bool:
-    raw = job.get("date_publication")
-    if not raw:
-        return False
-    try:
-        dt = datetime.fromisoformat(raw)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - dt).days > max_days
-    except Exception:
-        return False
+# 4. Rejet des contrats stage / alternance
+REJECT_CONTRATS = [
+    "stage",
+    "alternance",
+]
 
 
+# ─────────────────────────────────────────────
+# PROMPT IA
+# ─────────────────────────────────────────────
 
-def mark_rejected(job_id: str, category: str, reason: str):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE jobs SET rejection_category = %s, rejection_reason = %s
-                WHERE id = %s
-            """, (category, reason, job_id))
-        conn.commit()
+PROMPT_TEMPLATE = """Tu es un assistant de recrutement. Tu analyses des offres d'emploi de l'AP-HP pour le compte d'un candidat ingénieur.
 
-def mark_passed(job_id: str, reason: str = "Passe le filtre IA étape 1"):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE jobs SET rejection_category = 'passed_filter_1', rejection_reason = %s
-                WHERE id = %s
-            """, (reason, job_id))
-        conn.commit()
-
-def check_pass_keywords(job: dict) -> str | None:
-    text = (job.get("title", "") + " " + job.get("description", "")).lower()
-    for kw in PASS_KEYWORDS:
-        if kw in text:
-            return kw
-    return None
-
-def check_diploma_level(job: dict) -> str | None:
-    text = (job.get("title", "") + " " + job.get("description", "")).lower()
-    for kw in REJECT_DIPLOMA_LEVEL_KEYWORDS:
-        if kw.lower() in text:
-            return kw
-    return None
-
-PROMPT_TEMPLATE = """Tu es un assistant de recrutement. Analyse cette offre selon les règles suivantes.
+## PROFIL DU CANDIDAT
+Ingénieur diplômé d'une grande école (Bac+5, diplôme d'ingénieur généraliste).
+Compétences : gestion de projet, data, systèmes d'information, qualité, biomédical, contrôle de gestion, achat, management.
+Recherche : tout poste à responsabilité dans un environnement hospitalier pouvant être occupé par un ingénieur ou un cadre Bac+5.
+N'est PAS intéressé par : les postes purement techniques d'exécution (électricien, plombier...), les postes paramédicaux, les postes de niveau Bac/BTS.
 
 ## OFFRE
 Titre   : {title}
@@ -173,183 +212,354 @@ technicien, opérateur, agent, magasinier, électricien, cuisinier...
 En cas de doute → "pass"
 
 ## FORMAT DE RÉPONSE
-Tu dois répondre UNIQUEMENT avec le JSON, sans aucun texte avant ou après.
-Pas d'introduction, pas d'explication, pas de conclusion.
-Commence directement par {{ et termine par }}.
+Réponds UNIQUEMENT avec le JSON, sans texte avant ou après.
 {{
   "resultat": "pass" | "reject",
   "categorie": "diplome_paramedical" | "surqualification" | null,
-  "raison": "<obligatoire : explique en 1 phrase pourquoi pass ou reject>"
+  "raison": "<1 phrase obligatoire>"
 }}
 """
 
-def run_filter_1(limit: int = None):
-    if not GROQ_API_KEY:
-        raise ValueError("❌ GROQ_API_KEY manquante !")
 
-    client = Groq(api_key=GROQ_API_KEY)
-    jobs = load_unfiltered_jobs()
+# ─────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────
 
-    if limit:
-        jobs = jobs[:limit]
+def _text(job: dict, *fields: str) -> str:
+    parts = [str(job.get(f) or "") for f in fields]
+    return " ".join(parts).lower()
 
-    total = len(jobs)
-    print(f"\n🤖 Filtre IA étape 1 — {total} offres à analyser...")
 
-    # ─────────────────────────
-    # TELEGRAM START (AJOUT)
-    # ─────────────────────────
-    notify(f"""🚫 Étape 2 — Filtre IA en cours...
+def _check_keywords(text: str, keywords: list[str]) -> str | None:
+    for kw in keywords:
+        if kw.lower() in text:
+            return kw
+    return None
 
-📊 {total} offres à analyser
-""")
-    start_time = time.time()
-    # ─────────────────────────
 
-    passed = rejected = errors = auto_passed = 0
+def is_too_old(job: dict, max_days: int = 90) -> bool:
+    raw = job.get("date_publication")
+    if not raw:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(raw)[:10])
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).days > max_days
+    except Exception:
+        return False
 
-    for i, job in enumerate(tqdm(jobs, desc="Filtre IA"), 1):
-        print(f"  [{i}/{total}] {job['title'][:60]}...")
 
-        if job.get("metier", "") in PASS_METIERS:
-            mark_passed(job["id"], f"Passage automatique : métier qualifiant '{job.get('metier')}'")
-            auto_passed += 1
-            print(f"    🙈 Auto-pass métier : '{job.get('metier')}'")
-            continue
+# ─────────────────────────────────────────────
+# FILTRES AUTOMATIQUES
+# ─────────────────────────────────────────────
 
-        if is_too_old(job):
-            mark_rejected(job["id"], "trop_ancienne",
-                          f"Offre publiée il y a plus de 90 jours ({job.get('date_publication', '')[:10]})")
-            rejected += 1
-            print(f"    📅 Rejetée (trop ancienne) : {job.get('date_publication', '')[:10]}")
-            continue
+def _auto_pass_metier(job: dict) -> str | None:
+    metier = job.get("metier", "")
+    if metier in PASS_METIERS:
+        return f"Auto-pass : métier qualifiant '{metier}'"
+    return None
 
-        kw_found = check_pass_keywords(job)
-        if kw_found:
-            mark_passed(job["id"], f"Passage automatique : mot-clé '{kw_found}' détecté")
-            auto_passed += 1
-            print(f"    🙈 Auto-pass bac+5 : '{kw_found}'")
-            continue
 
-        title_lower = job.get("title", "").lower()
+def _auto_pass(job: dict) -> str | None:
+    text = _text(job, "title", "description")
+    kw = _check_keywords(text, PASS_KEYWORDS)
+    if kw:
+        return f"Auto-pass : mot-clé Bac+5 détecté ('{kw}')"
+    return None
 
-        kw_reject = next((kw for kw in REJECT_TITLE_KEYWORDS if kw in title_lower), None)
-        if kw_reject:
-            mark_rejected(job["id"], "surqualification",
-                          f"Candidat surqualifié (Bac+5) pour ce poste : '{kw_reject}' détecté dans le titre")
-            rejected += 1
-            print(f"    ❌ Auto-reject titre : '{kw_reject}'")
-            continue
 
-        # ── NOUVEAU : Reject niveau diplôme (BTS, DUT, Bac+2, Bac+3...)
-        kw_diploma = check_diploma_level(job)
-        if kw_diploma:
-            mark_rejected(job["id"], "surqualification",
-                          f"Auto-reject niveau diplôme : '{kw_diploma}' mentionné comme prérequis")
-            rejected += 1
-            print(f"    ❌ Auto-reject diplôme : '{kw_diploma}'")
-            continue
+def _reject_contrat(job: dict) -> tuple[str, str] | None:
+    # 4. Rejet stage / alternance
+    contrat = str(job.get("contrat") or "").strip().lower()
+    if not contrat:
+        return None
+    for c in REJECT_CONTRATS:
+        if c.lower() in contrat:
+            return (
+                "contrat_exclu",
+                f"Auto-reject contrat : '{c}' détecté dans '{contrat}'",
+            )
+    return None
 
-        kw_found = check_pass_keywords(job)   # ← déjà existant, rien ne change après
 
-        prompt = PROMPT_TEMPLATE.format(
-            title=job.get("title", ""),
-            metier=job.get("metier", ""),
-            filiere=job.get("filiere", ""),
-            description=job.get("description", "")[:1500],
+def _reject_title(job: dict) -> tuple[str, str] | None:
+    title = _text(job, "title")
+    kw = _check_keywords(title, REJECT_TITLE_KEYWORDS)
+    if kw:
+        return (
+            "surqualification",
+            f"Auto-reject titre : '{kw}' détecté",
         )
+    return None
 
-        success = False
-        for attempt in range(5):
-            try:
-                response = client.chat.completions.create(
-                    model="moonshotai/kimi-k2-instruct",
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=400,
-                )
-                raw = response.choices[0].message.content.strip()
-                match = re.search(r'\{[^{}]*"resultat"[^{}]*\}', raw, re.DOTALL)
-                if not match:
-                    match = re.search(r'\{.*\}', raw, re.DOTALL)
-                if not match:
-                    raise ValueError(f"Pas de JSON : {raw[:80]}")
-                result = json.loads(match.group(0))
 
-                raison = result.get("raison", "").strip()
-                if not raison:
-                    raison = f"Pas de raison fournie — résultat brut : {result.get('resultat')}"
+def _reject_paramedical(job: dict) -> tuple[str, str] | None:
+    # 3. Diplômes stricts uniquement — pas de noms de métiers pour éviter les faux positifs
+    text = _text(job, "title", "description")
+    kw = _check_keywords(text, REJECT_PARAMEDICAL_KEYWORDS)
+    if kw:
+        return (
+            "diplome_paramedical",
+            f"Auto-reject paramédical : diplôme '{kw}' exigé",
+        )
+    return None
 
-                if result["resultat"] == "reject":
-                    mark_rejected(job["id"], result.get("categorie", "surqualification"), raison)
-                    rejected += 1
-                    print(f"    ❌ Rejeté ({result.get('categorie','?')}) : {raison}")
-                else:
-                    mark_passed(job["id"], raison)
-                    passed += 1
-                    print(f"    ✅ Accepté : {raison}")
 
-                success = True
+def _reject_diploma_level(job: dict) -> tuple[str, str] | None:
+    text = _text(job, "title", "description")
+    kw = _check_keywords(text, REJECT_DIPLOMA_LEVEL_KEYWORDS)
+    if kw:
+        return (
+            "surqualification",
+            f"Auto-reject niveau diplôme : '{kw}' mentionné comme prérequis",
+        )
+    return None
+
+
+def _reject_filiere(job: dict) -> tuple[str, str] | None:
+    # 2. Rejet par filière
+    filiere = str(job.get("filiere") or "").strip()
+    if not filiere:
+        return None
+    for f in REJECT_FILIERES:
+        if f.lower() in filiere.lower():
+            return (
+                "diplome_paramedical",
+                f"Auto-reject filière : '{filiere}'",
+            )
+    return None
+
+
+# ─────────────────────────────────────────────
+# FILTRE IA (10. extrait en fonction séparée)
+# ─────────────────────────────────────────────
+
+def _ai_filter(job: dict, client: Groq) -> tuple[str, str | None, str]:
+    prompt = PROMPT_TEMPLATE.format(
+        title=job.get("title", ""),
+        metier=job.get("metier", ""),
+        filiere=job.get("filiere", ""),
+        description=(job.get("description") or "")[:1500],
+    )
+
+    for attempt in range(4):
+        try:
+            response = client.chat.completions.create(
+                model="moonshotai/kimi-k2-instruct",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=300,
+            )
+            raw = response.choices[0].message.content.strip()
+
+            match = re.search(r'\{[^{}]*"resultat"[^{}]*\}', raw, re.DOTALL)
+            if not match:
+                match = re.search(r'\{.*\}', raw, re.DOTALL)
+            if not match:
+                raise ValueError(f"Pas de JSON trouvé : {raw[:80]}")
+
+            result = json.loads(match.group(0))
+            raison = result.get("raison", "").strip() or "Pas de raison fournie"
+            decision = result.get("resultat", "pass")
+            categorie = result.get("categorie")
+
+            return decision, categorie, raison
+
+        except Exception as e:
+            err_str = str(e)
+            logger.warning(f"    Tentative {attempt+1}/4 échouée : {err_str[:80]}")
+
+            if "429" in err_str or "rate_limit" in err_str:
+                if "per day" in err_str or "TPD" in err_str:
+                    # 8. Lever RuntimeError pour que run_filter active le flag daily_limit_hit
+                    raise RuntimeError(f"Limite journalière Groq atteinte : {err_str}") from e
+                wait = 60 if attempt < 2 else 120
+                logger.info(f"    Rate limit minute — pause {wait}s")
+                time.sleep(wait)
+            else:
                 break
 
-            except Exception as e:
-                err = str(e)
-                print(f"    ⚠️  Erreur : {err}")
-                if "429" in err or "rate_limit" in err:
-                    if "per day" in err or "TPD" in err:
-                        match_wait = re.search(r'try again in (.+?)\.', err)
-                        wait_msg = f"Réessaie dans : {match_wait.group(1)}" if match_wait else ""
-                        print(f"    🛑 Limite journalière ! {wait_msg}")
-                        remaining = jobs[i:]
-                        with get_connection() as conn:
-                            with conn.cursor() as cur:
-                                for remaining_job in remaining:
-                                    cur.execute("""
-                                        UPDATE jobs SET rejection_category = 'a_trier'
-                                        WHERE id = %s
-                                    """, (remaining_job["id"],))
-                            conn.commit()
-                        print(f"    💾 {len(remaining)} offres marquées 'à trier'")
-                        print(f"    💾 {passed + auto_passed} passées, {rejected} rejetées jusqu'ici")
-                        return
+    return "error", None, "Erreur LLM — passage par défaut"
+
+
+# ─────────────────────────────────────────────
+# POINT D'ENTRÉE PRINCIPAL
+# ─────────────────────────────────────────────
+
+def run_filter(conn, limit: int = None) -> dict:
+    # 1. Client Groq initialisé une seule fois
+    groq_client = None
+    if GROQ_API_KEY:
+        groq_client = Groq(api_key=GROQ_API_KEY)
+    else:
+        logger.warning("GROQ_API_KEY absente — filtre IA désactivé, fallback pass pour tous")
+
+    # 1. Connexion unique passée en paramètre
+    jobs = get_offers_to_filter(conn)
+    if limit:
+        jobs = jobs[:limit]
+    total = len(jobs)
+
+    stats = {
+        "total": total,
+        "auto_passed": 0,
+        "fallback_passed": 0,
+        "rejected": 0,
+        "errors": 0,
+        "ai_passed": 0,
+        "ai_rejected": 0,
+        "ai_errors": 0,
+    }
+
+    notify(f"🚫 Filtrage APHP en cours...\n\n📊 {total} offres à analyser")
+    start_time = time.time()
+
+    # 8. Flag limite journalière (pattern HCL)
+    daily_limit_hit = False
+
+    for job in tqdm(jobs, desc="Filtre APHP"):
+        job_id = job["id"]
+        titre = job.get("title", "")[:60]
+
+        try:
+            # ── 0. Reject offre trop ancienne
+            if is_too_old(job):
+                date_ref = job.get("date_publication") or ""
+                update_ai_filter(
+                    conn, job_id, "reject",
+                    f"Auto-reject : offre non modifiée depuis plus de 90 jours ({str(date_ref)[:10]})"
+                )
+                stats["rejected"] += 1
+                logger.debug(f"  ❌ Trop ancienne [{job_id}] {titre}")
+                continue
+
+            # ── 1. Reject contrat (stage, alternance)
+            result = _reject_contrat(job)
+            if result:
+                cat, reason = result
+                update_ai_filter(conn, job_id, "reject", reason)
+                stats["rejected"] += 1
+                logger.debug(f"  ❌ Contrat [{job_id}] {titre} — {reason}")
+                continue
+
+            # ── 2. Reject titre
+            result = _reject_title(job)
+            if result:
+                cat, reason = result
+                update_ai_filter(conn, job_id, "reject", reason)
+                stats["rejected"] += 1
+                logger.debug(f"  ❌ Titre [{job_id}] {titre} — {reason}")
+                continue
+
+            # ── 3. Reject paramédical (diplômes stricts dans titre + description)
+            result = _reject_paramedical(job)
+            if result:
+                cat, reason = result
+                update_ai_filter(conn, job_id, "reject", reason)
+                stats["rejected"] += 1
+                logger.debug(f"  ❌ Paramédical [{job_id}] {titre} — {reason}")
+                continue
+
+            # ── 4. Reject niveau de diplôme trop bas (BTS, DUT, Bac+2, Bac+3...)
+            result = _reject_diploma_level(job)
+            if result:
+                cat, reason = result
+                update_ai_filter(conn, job_id, "reject", reason)
+                stats["rejected"] += 1
+                logger.debug(f"  ❌ Niveau diplôme [{job_id}] {titre} — {reason}")
+                continue
+
+            # ── 5. Reject filière
+            result = _reject_filiere(job)
+            if result:
+                cat, reason = result
+                update_ai_filter(conn, job_id, "reject", reason)
+                stats["rejected"] += 1
+                logger.debug(f"  ❌ Filière [{job_id}] {titre} — {reason}")
+                continue
+
+            # ── 6. Auto-pass métier qualifiant (après tous les rejets)
+            reason = _auto_pass_metier(job)
+            if reason:
+                update_ai_filter(conn, job_id, "pass", reason)
+                stats["auto_passed"] += 1
+                logger.debug(f"  ✅ Auto-pass métier [{job_id}] {titre} — {reason}")
+                continue
+
+            # ── 7. Auto-pass Bac+5 (après tous les rejets)
+            reason = _auto_pass(job)
+            if reason:
+                update_ai_filter(conn, job_id, "pass", reason)
+                stats["auto_passed"] += 1
+                logger.debug(f"  ✅ Auto-pass [{job_id}] {titre} — {reason}")
+                continue
+
+            # ── 8. Filtre IA
+            if groq_client and not daily_limit_hit:
+                try:
+                    decision, categorie, raison = _ai_filter(job, groq_client)
+
+                    if decision == "reject":
+                        update_ai_filter(conn, job_id, "reject", raison)
+                        stats["rejected"] += 1
+                        stats["ai_rejected"] += 1
+                        logger.debug(f"  ❌ IA [{job_id}] {titre} — {raison}")
+                    elif decision == "error":
+                        # Pas de mise à jour en base : le job sera retraité au prochain run
+                        stats["ai_errors"] += 1
+                        logger.warning(f"  ⚠️  IA error [{job_id}] {titre} — sera retraité")
                     else:
-                        print(f"    ⏳ Rate limit/minute, pause 60s...")
-                        time.sleep(60)
-                else:
-                    break
+                        update_ai_filter(conn, job_id, "pass", raison)
+                        stats["ai_passed"] += 1
+                        logger.debug(f"  ✅ IA [{job_id}] {titre} — {raison}")
 
-        if not success:
-            mark_passed(job["id"], "Erreur analyse — passage par défaut")
-            errors += 1
+                except RuntimeError as e:
+                    logger.error(f"Limite Groq TPD : {e}")
+                    daily_limit_hit = True
+                    logger.info(f"  ⏳ [{job_id}] laissé à trier (limite Groq journalière)")
 
-    print("\n📊 Résumé Filtre IA :")
-    print(f"   → {total} analysées")
-    print(f"   → {auto_passed} auto-pass")
-    print(f"   → {passed} acceptées (LLM)")
-    print(f"   → {rejected} rejetées")
-    print(f"   → {errors} erreurs")
+            else:
+                logger.debug(f"  ⏳ [{job_id}] laissé à trier (IA indisponible)")
 
-    print(f"\n✅ Filtre IA étape 1 terminé :")
-    print(f"   🙈 Auto-passées  : {auto_passed}")
-    print(f"   ✅ Passées (LLM) : {passed}")
-    print(f"   ❌ Rejetées      : {rejected}")
-    print(f"   ⚠️  Erreurs       : {errors}")
+        except Exception as e:
+            logger.error(f"  ⚠️  Erreur sur job {job_id} : {e}")
+            stats["errors"] += 1
 
-    # ─────────────────────────
-    # TELEGRAM END (AJOUT)
-    # ─────────────────────────
-    elapsed = int(time.time() - start_time)
-    kept = passed + auto_passed
+    kept = stats["auto_passed"] + stats["fallback_passed"] + stats["ai_passed"]
     ratio = (kept / total * 100) if total else 0
 
+    print(f"\n📊 Résumé filtre APHP :")
+    print(f"   Total analysées      : {total}")
+    print(f"   ✅ Auto-passées      : {stats['auto_passed']}")
+    print(f"   🤖 IA passées        : {stats['ai_passed']}")
+    print(f"   🟡 Fallback pass     : {stats['fallback_passed']}")
+    print(f"   ❌ Rejetées          : {stats['rejected']}")
+    print(f"   ⚠️  Erreurs IA        : {stats['ai_errors']}")
+    print(f"   ⚠️  Erreurs générales : {stats['errors']}")
+    print(f"   → Taux de rétention  : {ratio:.1f}%")
+
+    elapsed = int(time.time() - start_time)
     notify(f"""🚫 Filtrage APHP terminé
 
 📊 {total} → {kept} offres ({ratio:.1f}%)
-❌ {rejected} rejetées
-⚠️ {errors} erreurs
+❌ {stats['rejected']} rejetées
+⚠️ {stats['ai_errors']} erreurs IA
 
 ⏱️ {elapsed}s
 """)
-    # ─────────────────────────
+
+    return stats
+
 
 if __name__ == "__main__":
-    run_filter_1()
+    import psycopg as psycopg2
+    from database_aphp import get_connection
+
+    logging.basicConfig(level=logging.DEBUG)
+
+    DATABASE_URL = os.environ["DATABASE_URL"]
+    conn = get_connection(DATABASE_URL)
+    try:
+        stats = run_filter(conn, limit=50)
+    finally:
+        conn.close()

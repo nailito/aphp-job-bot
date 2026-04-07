@@ -7,8 +7,8 @@ from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-def get_connection():
-    return psycopg2.connect(DATABASE_URL + "?sslmode=require")
+def get_connection(url: str = None):
+    return psycopg2.connect((url or DATABASE_URL) + "?sslmode=require")
 
 def init_db():
     with get_connection() as conn:
@@ -72,19 +72,57 @@ def init_db():
         conn.commit()
     print("✅ Base de données Supabase initialisée")
 
+
+# ─────────────────────────────────────────────
+# FONCTIONS FILTRE
+# ─────────────────────────────────────────────
+
+def get_offers_to_filter(conn) -> list[dict]:
+    """Retourne les offres actives non encore filtrées (ou marquées à_trier)."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, title, metier, filiere, contrat, date_publication, description
+            FROM jobs
+            WHERE status = 'active'
+            AND (rejection_category IS NULL OR rejection_category = 'a_trier')
+        """)
+        rows = cur.fetchall()
+    cols = ["id", "title", "metier", "filiere", "contrat", "date_publication", "description"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def update_ai_filter(conn, job_id: str, decision: str, reason: str):
+    """
+    Met à jour rejection_category et rejection_reason d'une offre.
+    decision : "pass" → rejection_category = 'passed_filter_1'
+    decision : "reject" → rejection_category = la catégorie passée dans reason (extraite par filter)
+    """
+    category = "passed_filter_1" if decision == "pass" else "rejected"
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE jobs
+            SET rejection_category = %s, rejection_reason = %s
+            WHERE id = %s
+        """, (category, reason, job_id))
+    conn.commit()
+
+
+# ─────────────────────────────────────────────
+# UPSERT / SCRAPING
+# ─────────────────────────────────────────────
+
 def upsert_jobs(jobs: list[dict]) -> dict:
     now = datetime.now().isoformat()
     with get_connection() as conn:
         with conn.cursor() as cur:
-            # ← Tous les IDs connus, pas seulement les actifs
             cur.execute("SELECT id, status FROM jobs")
             rows = cur.fetchall()
             existing_ids = {r[0] for r in rows if r[1] == 'active'}
             all_known_ids = {r[0] for r in rows}
 
             site_ids    = {j["id"] for j in jobs}
-            new_ids     = site_ids - all_known_ids        # ← vraiment nouveaux
-            missing_ids = existing_ids - site_ids         # ← absents ce run
+            new_ids     = site_ids - all_known_ids
+            missing_ids = existing_ids - site_ids
             new_jobs    = [j for j in jobs if j["id"] in new_ids]
 
             for job in new_jobs:
@@ -104,7 +142,6 @@ def upsert_jobs(jobs: list[dict]) -> dict:
                     job.get("description",""), job.get("url",""), now, now
                 ))
 
-            # Réactiver les offres qui réapparaissent après removed
             reactivated = (all_known_ids - existing_ids) & site_ids
             for job_id in reactivated:
                 cur.execute("""
@@ -112,7 +149,6 @@ def upsert_jobs(jobs: list[dict]) -> dict:
                     WHERE id = %s
                 """, (now, job_id))
 
-            # Mettre à jour last_seen des offres vues
             for job in jobs:
                 if job["id"] in existing_ids:
                     cur.execute(
@@ -120,7 +156,6 @@ def upsert_jobs(jobs: list[dict]) -> dict:
                         (now, job["id"])
                     )
 
-            # Incrémenter miss_count des absents
             newly_removed = set()
             if missing_ids:
                 placeholders = ",".join(["%s"] * len(missing_ids))
@@ -144,7 +179,12 @@ def upsert_jobs(jobs: list[dict]) -> dict:
     print(f"  🔄  {len(reactivated)} offres réactivées")
     print(f"  ♻️  {len(existing_ids & site_ids)} offres déjà connues")
     return {"new": new_jobs, "removed": list(newly_removed)}
-    
+
+
+# ─────────────────────────────────────────────
+# SCORES / STATS / FEEDBACKS
+# ─────────────────────────────────────────────
+
 def save_scores(jobs: list[dict]):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -162,7 +202,7 @@ def get_stats() -> dict:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM jobs")
             total = cur.fetchone()[0]
-            cur.execute("SELECT id FROM jobs")
+            cur.execute("SELECT COUNT(*) FROM jobs WHERE status = 'active'")  # bugfix
             active = cur.fetchone()[0]
             cur.execute("SELECT COUNT(*) FROM jobs WHERE status = 'removed'")
             removed = cur.fetchone()[0]
@@ -189,15 +229,10 @@ def save_feedback(job_id: str, decision: str, tags: list, commentaire: str):
                 """, (job_id, decision, str(tags), commentaire, now))
 
             cur.execute("""
-                UPDATE jobs
-                SET rejection_category = 'reviewed'
-                WHERE id = %s
+                UPDATE jobs SET rejection_category = 'reviewed' WHERE id = %s
             """, (job_id,))
 
-
         conn.commit()
-
-        
 
 def get_feedbacks() -> list[dict]:
     with get_connection() as conn:
@@ -220,7 +255,6 @@ def delete_feedback(job_id: str):
             cur.execute("DELETE FROM feedbacks WHERE job_id = %s", (job_id,))
         conn.commit()
 
-
 def get_application(job_id: str) -> dict | None:
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -238,7 +272,6 @@ def save_application(job_id: str, **kwargs):
 
     with get_connection() as conn:
         with conn.cursor() as cur:
-            existing = cur.execute("SELECT job_id FROM applications WHERE job_id = %s", (job_id,))
             cur.execute("SELECT job_id FROM applications WHERE job_id = %s", (job_id,))
             exists = cur.fetchone()
 
