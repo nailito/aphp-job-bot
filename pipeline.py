@@ -112,7 +112,7 @@ def run_pipeline():
         print("\n📡 Étape 1 — Scraping...")
         notify("📡 Étape 1 — Scraping en cours...")
         from scraper  import scrape_jobs
-        from database import init_db, upsert_jobs
+        from database_aphp import init_db, upsert_jobs
         from config   import APHP_JOBS_URL
 
         init_db()

@@ -288,7 +288,7 @@ if page == "📊 Tableau de bord":
 
     # ── APHP : meilleure offre évaluée + boutons navigation
     if source == "APHP":
-        from database import get_feedbacks
+        from database_aphp import get_feedbacks
         feedbacks         = get_feedbacks()
         feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
 
@@ -864,7 +864,7 @@ elif page == "📰 Rapport du jour":
 elif page == "🚀 À postuler":
     st.title("🚀 Offres à postuler")
 
-    from database import get_feedbacks
+    from database_aphp import get_feedbacks
     feedbacks          = get_feedbacks()
     feedbacks_positifs = {f["job_id"] for f in feedbacks if f["decision"] in ["⭐", "👍"]}
 
@@ -971,7 +971,7 @@ elif page == "📨 Mes candidatures":
     # ── Formulaire d'ajout
     with st.expander("➕ Ajouter une candidature", expanded=False):
         if source == "APHP":
-            from database import get_feedbacks
+            from database_aphp import get_feedbacks
             feedbacks     = get_feedbacks()
             fb_positifs   = {f["job_id"] for f in feedbacks if f["decision"] in ("⭐", "👍")}
             df_eligible   = df_active[df_active["id"].isin(fb_positifs)].copy()
@@ -1119,7 +1119,7 @@ elif page == "📨 Mes candidatures":
 elif page == "📝 À évaluer":
     st.title("📝 À évaluer")
 
-    from database import save_feedback, get_feedbacks, delete_feedback
+    from database_aphp import save_feedback, get_feedbacks, delete_feedback
 
     feedbacks_existants = {f["job_id"] for f in get_feedbacks()}
     df_a_evaluer = df_active[
@@ -1259,7 +1259,7 @@ elif page == "🗑️ Offres retirées du site":
     if df_removed.empty:
         st.info("Aucune offre retirée.")
     else:
-        from database import get_feedbacks
+        from database_aphp import get_feedbacks
         feedbacks    = get_feedbacks()
         feedback_map = {f["job_id"]: f for f in feedbacks}
 

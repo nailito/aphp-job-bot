@@ -1,4 +1,4 @@
-from database import get_stats
+from database_aphp import get_stats
 from config   import EXCLUDED_METIERS
 import psycopg as psycopg2
 import os
