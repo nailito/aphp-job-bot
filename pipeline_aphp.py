@@ -111,7 +111,7 @@ def run_pipeline():
         # ─────────────────────────
         print("\n📡 Étape 1 — Scraping...")
         notify("📡 Étape 1 — Scraping en cours...")
-        from scraper  import scrape_jobs
+        from scraper_aphp  import scrape_jobs
         from database_aphp import init_db, upsert_jobs
         from config   import APHP_JOBS_URL
 
@@ -176,7 +176,7 @@ def run_pipeline():
         # ─────────────────────────
         print("\n🤖 Étape 3 — Filtre IA...")
         notify("\n🤖 Étape 3 — Filtre IA...")
-        from filter_ai import run_filter_1
+        from filter_aphp import run_filter_1
 
         t0 = time.time()
         run_filter_1()
@@ -188,7 +188,7 @@ def run_pipeline():
         # ─────────────────────────
         print("\n🎯 Étape 4 — Scoring profil...")
         notify("\n🎯 Étape 4 — Scoring profil...")
-        from scorer import run_scorer
+        from scorer_aphp import run_scorer
 
         t0 = time.time()
         run_scorer()

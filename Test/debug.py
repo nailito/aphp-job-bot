@@ -3,7 +3,7 @@ from datetime import datetime
 
 # 👉 adapte cet import à ton projet
 # ex: from scraper import scrape_jobs
-from scraper import scrape_jobs
+from scraper_aphp import scrape_jobs
 
 
 class JobMemory:

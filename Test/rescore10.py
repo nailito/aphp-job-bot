@@ -30,5 +30,5 @@ with get_connection() as conn:
     print("✅ 10 offres remises à zéro")
 
 # 2. Re-scorer uniquement ces offres
-from scorer import run_scorer
+from scorer_aphp import run_scorer
 run_scorer(limit=10)

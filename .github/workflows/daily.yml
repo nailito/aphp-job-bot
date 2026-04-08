@@ -31,7 +31,7 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python pipeline.py
+        run: python pipeline_aphp.py
       
       - name: 🚀 Run pipeline HCL
         continue-on-error: true
