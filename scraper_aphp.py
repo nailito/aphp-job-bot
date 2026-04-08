@@ -11,9 +11,17 @@ from notifier import send_telegram
 API_URL = "https://recrutement.aphp.fr/api/search"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Content-Type": "application/json",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Origin": "https://recrutement.aphp.fr",
     "Referer": "https://recrutement.aphp.fr/jobs",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
 }
 
 TAG_IDS = {
@@ -122,14 +130,23 @@ def parse_tags(custom_tags: list) -> dict:
 # ─────────────────────────
 def init_session():
     try:
-        session.get(
+        # Visite la page principale pour obtenir les cookies
+        r = session.get(
             "https://recrutement.aphp.fr/jobs",
+            headers={"User-Agent": HEADERS["User-Agent"], "Accept": "text/html"},
+            timeout=15
+        )
+        time.sleep(2)  # pause humaine
+        
+        # Visite une page intermédiaire si elle existe
+        session.get(
+            "https://recrutement.aphp.fr/",
             headers={"User-Agent": HEADERS["User-Agent"]},
             timeout=15
         )
+        time.sleep(1)
     except Exception as e:
         raise ScrapingError(f"Init session failed: {e}")
-
 
 # ─────────────────────────
 # FETCH
