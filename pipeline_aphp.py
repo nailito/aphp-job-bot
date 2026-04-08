@@ -179,7 +179,7 @@ def run_pipeline():
         from filter_aphp import run_filter
 
         t0 = time.time()
-        run_filter()
+        execute_with_retry(lambda conn: run_filter(conn))
         print(f"   ⏱ Filtre IA terminé en {int(time.time()-t0)}s")
         notify(f"   ⏱ Filtre IA terminé en {int(time.time()-t0)}s")
 
