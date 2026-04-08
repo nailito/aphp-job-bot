@@ -176,10 +176,10 @@ def run_pipeline():
         # ─────────────────────────
         print("\n🤖 Étape 3 — Filtre IA...")
         notify("\n🤖 Étape 3 — Filtre IA...")
-        from filter_aphp import run_filter_1
+        from filter_aphp import run_filter
 
         t0 = time.time()
-        run_filter_1()
+        run_filter()
         print(f"   ⏱ Filtre IA terminé en {int(time.time()-t0)}s")
         notify(f"   ⏱ Filtre IA terminé en {int(time.time()-t0)}s")
 
