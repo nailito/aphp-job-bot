@@ -177,20 +177,18 @@ def _persist(conn, job: dict, result: dict):
     update_score(conn, job["id"], score, analysis)
     print(f"[DEBUG] JOB {job.get('id')} - DB updated")
     
-    # Rejet automatique si score <= 50
+    # Rejet automatique si score <= 50 — utilise ai_filter_decision (schéma HCL)
     if score <= 50:
         raison = result.get("raison", "")
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE hcl_jobs
-                SET rejection_category = 'profil_inadequat',
-                    rejection_reason = %s
+                SET ai_filter_decision = 'reject',
+                    ai_filter_reason   = %s
                 WHERE id = %s
             """, (f"Score trop bas ({score}/100) : {raison}", job["id"]))
         conn.commit()
         print(f"[DEBUG] JOB {job.get('id')} - rejected (score <= 50)")
-    
-    return score
 
 
 def _notify_top_score(job: dict, score: int, priorite: str, raison: str):
