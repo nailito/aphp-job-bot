@@ -176,6 +176,20 @@ def _persist(conn, job: dict, result: dict):
     )
     update_score(conn, job["id"], score, analysis)
     print(f"[DEBUG] JOB {job.get('id')} - DB updated")
+    
+    # Rejet automatique si score <= 50
+    if score <= 50:
+        raison = result.get("raison", "")
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE hcl_jobs
+                SET rejection_category = 'profil_inadequat',
+                    rejection_reason = %s
+                WHERE id = %s
+            """, (f"Score trop bas ({score}/100) : {raison}", job["id"]))
+        conn.commit()
+        print(f"[DEBUG] JOB {job.get('id')} - rejected (score <= 50)")
+    
     return score
 
 
@@ -266,6 +280,9 @@ def run_scorer(conn, limit: int = None) -> dict:
             print(f"[DEBUG] JOB {job.get('id')} - priorite = {priorite}")
             print(f"[DEBUG] raison = {raison}")
             logger.info(f"    🎯 {priorite} — {score}/100 : {raison[:80]}")
+            
+            if score <= 50:
+                logger.info(f"    ❌ Rejeté automatiquement (score <= 50)")
 
             _notify_top_score(job, score, priorite, raison)
 
