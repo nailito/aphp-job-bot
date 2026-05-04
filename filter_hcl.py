@@ -91,7 +91,7 @@ def _ai_filter(job: dict, client: Groq) -> tuple[str, str | None, str]:
     for attempt in range(4):
         try:
             response = client.chat.completions.create(
-                model="moonshotai/kimi-k2-instruct",
+                model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=300,
             )
