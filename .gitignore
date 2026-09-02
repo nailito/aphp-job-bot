@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+uv.lock
+
+# Virtual environments and local configuration
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.local/
+.streamlit/secrets.toml
+
+# Runtime data
+*.db
+*.sqlite
+*.sqlite3
+backup*.sql
+dump*.sql
+logs/
+data/
+*.log
+homepage*.html
+debug_*.png
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

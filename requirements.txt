@@ -1,0 +1,8 @@
+beautifulsoup4>=4.12,<5
+groq>=1.0,<2
+pandas>=2.2,<3
+plotly>=6,<7
+psycopg[binary]>=3.2,<4
+requests>=2.31,<3
+streamlit>=1.50,<2
+tqdm>=4.66,<5

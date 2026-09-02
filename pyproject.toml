@@ -1,0 +1,18 @@
+[project]
+name = "hospital-job-watch"
+version = "0.1.0"
+description = "Multi-source hospital job monitoring and ranking pipeline"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["work"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
